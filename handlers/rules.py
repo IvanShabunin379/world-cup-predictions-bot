@@ -4,7 +4,7 @@ from aiogram.types import Message
 
 router = Router()
 
-RULES_TEXT = """📖 <b>Правила турнира прогнозов ЧМ-2026</b>
+RULES_TEXT = """📖 <b>Правила турнира прогнозов на ЧМ-2026</b>
 
 <b>Групповой этап</b>
 За каждый матч можно получить:

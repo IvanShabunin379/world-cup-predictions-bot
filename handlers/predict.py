@@ -483,8 +483,7 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
 
 
 async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_league_ids: list):
-    from aiogram import Bot
-    db = get_db()
+    from utils.flags import fmt_match as _fmt_match
     user_id = data["user_id"]
     match = data["match"]
 
@@ -492,27 +491,42 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
         league = next((l for l in data["leagues"] if l["id"] == league_id), None)
         if not league or league["type"] != "private":
             continue
-        first_uid = _get_assignment(match["id"])
-        if first_uid != user_id:
-            continue
 
         vanya_id, nik_id = _get_vanya_nik_ids()
         if not vanya_id or not nik_id:
             continue
 
+        first_uid = _get_assignment(match["id"])
+        match_str = _fmt_match(match["home_team"], match["away_team"])
+        my_name = "Ваня" if user_id == vanya_id else "Ник"
         partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
-        first_name = callback.from_user.first_name or "Партнёр"
 
-        bot: Bot = callback.bot
-        try:
-            await bot.send_message(
-                partner_tg,
-                f"⚽ {first_name} поставил прогноз на матч:\n"
-                f"{match['home_team']} — {match['away_team']}\n\n"
-                "Твой ход! ⚽ Прогноз",
+        if first_uid == user_id:
+            # Первый поставил — уведомляем партнёра
+            try:
+                await callback.bot.send_message(
+                    partner_tg,
+                    f"⚽ {my_name} поставил прогноз на {match_str}.\nТвой ход!",
+                )
+            except Exception:
+                pass
+        else:
+            # Второй поставил — раскрываем оба прогноза обоим
+            vanya_pred = _get_prediction(vanya_id, match["id"], league_id)
+            nik_pred = _get_prediction(nik_id, match["id"], league_id)
+            vanya_score = f"{vanya_pred['home_score']}:{vanya_pred['away_score']}" if vanya_pred else "–"
+            nik_score = f"{nik_pred['home_score']}:{nik_pred['away_score']}" if nik_pred else "–"
+
+            reveal = (
+                f"🎲 Оба поставили на {match_str}!\n\n"
+                f"Ваня: {vanya_score}\n"
+                f"Ник: {nik_score}"
             )
-        except Exception:
-            pass
+            for tg_id in (VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID):
+                try:
+                    await callback.bot.send_message(tg_id, reveal)
+                except Exception:
+                    pass
 
 
 @router.callback_query(PredictStates.confirming, F.data == "pred_cancel")

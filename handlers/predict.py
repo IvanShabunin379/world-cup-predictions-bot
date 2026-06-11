@@ -511,16 +511,20 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
             except Exception:
                 pass
         else:
-            # Второй поставил — раскрываем оба прогноза обоим
+            # Второй поставил — раскрываем оба прогноза обоим, первый предиктор идёт первым
             vanya_pred = _get_prediction(vanya_id, match["id"], league_id)
             nik_pred = _get_prediction(nik_id, match["id"], league_id)
             vanya_score = f"{vanya_pred['home_score']}:{vanya_pred['away_score']}" if vanya_pred else "–"
             nik_score = f"{nik_pred['home_score']}:{nik_pred['away_score']}" if nik_pred else "–"
 
+            if first_uid == vanya_id:
+                scores_lines = f"Ваня: {vanya_score}\nНик: {nik_score}"
+            else:
+                scores_lines = f"Ник: {nik_score}\nВаня: {vanya_score}"
+
             reveal = (
                 f"🎲 Оба брата поставили на {match_str}!\n\n"
-                f"Ваня: {vanya_score}\n"
-                f"Ник: {nik_score}\n\n"
+                f"{scores_lines}\n\n"
                 f"Ждём игры с нетерпением! 🔥"
             )
             for tg_id in (VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID):

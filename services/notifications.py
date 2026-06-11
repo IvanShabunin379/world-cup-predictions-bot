@@ -66,6 +66,14 @@ async def _schedule_result_jobs(bot):
     for m in matches:
         kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
         results_time = kickoff + timedelta(hours=2, minutes=15)
+        if kickoff > now:
+            scheduler.add_job(
+                _reveal_public_predictions,
+                trigger=DateTrigger(run_date=kickoff),
+                args=[bot, m["id"]],
+                id=f"reveal_{m['id']}",
+                replace_existing=True,
+            )
         if results_time > now:
             scheduler.add_job(
                 _fetch_and_send_results,
@@ -121,6 +129,48 @@ async def _send_reminders(bot, window_start, window_end, prefix: str):
 
         try:
             await bot.send_message(tg_id, "\n".join(lines))
+        except Exception:
+            pass
+
+
+async def _reveal_public_predictions(bot, match_id: int):
+    """At kickoff: send all public league predictions to all public league members."""
+    db = get_db()
+    match = db.table("matches").select("*").eq("id", match_id).execute().data
+    if not match:
+        return
+    match = match[0]
+
+    public_league = db.table("leagues").select("id").eq("type", "public").execute().data
+    if not public_league:
+        return
+    public_id = public_league[0]["id"]
+
+    preds = (
+        db.table("predictions")
+        .select("*, users(name)")
+        .eq("match_id", match_id)
+        .eq("league_id", public_id)
+        .execute()
+        .data
+    )
+    if not preds:
+        return
+
+    match_str = fmt_match(match["home_team"], match["away_team"])
+    lines = [f"🏁 Матч начался! {match_str}\n", "Ставки Весенних Зорь:"]
+    for p in sorted(preds, key=lambda x: x.get("created_at", "")):
+        name = (p.get("users") or {}).get("name") or "?"
+        lines.append(f"  {name}: {p['home_score']}:{p['away_score']}")
+
+    text = "\n".join(lines)
+    members = db.table("league_members").select("user_id").eq("league_id", public_id).execute().data
+    user_ids = [m["user_id"] for m in members]
+    users = db.table("users").select("id, telegram_id").in_("id", user_ids).execute().data
+
+    for u in users:
+        try:
+            await bot.send_message(u["telegram_id"], text)
         except Exception:
             pass
 

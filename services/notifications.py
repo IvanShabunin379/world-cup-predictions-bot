@@ -158,7 +158,7 @@ async def _reveal_public_predictions(bot, match_id: int):
         return
 
     match_str = fmt_match(match["home_team"], match["away_team"])
-    lines = [f"🏁 Матч начался! {match_str}\n", "Ставки Весенних Зорь:"]
+    lines = [f"🏁 Матч начался! {match_str}\n", "Прогнозы футбольных аналитиков Весенних Зорь:"]
     for p in sorted(preds, key=lambda x: x.get("created_at", "")):
         name = (p.get("users") or {}).get("name") or "?"
         lines.append(f"  {name}: {p['home_score']}:{p['away_score']}")

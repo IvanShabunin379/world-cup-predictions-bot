@@ -518,9 +518,10 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
             nik_score = f"{nik_pred['home_score']}:{nik_pred['away_score']}" if nik_pred else "–"
 
             reveal = (
-                f"🎲 Оба поставили на {match_str}!\n\n"
+                f"🎲 Оба брата поставили на {match_str}!\n\n"
                 f"Ваня: {vanya_score}\n"
-                f"Ник: {nik_score}"
+                f"Ник: {nik_score}\n\n"
+                f"Ждём игры с нетерпением! 🔥"
             )
             for tg_id in (VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID):
                 try:

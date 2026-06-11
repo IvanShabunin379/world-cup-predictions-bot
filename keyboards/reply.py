@@ -6,6 +6,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="⚽ Прогноз"), KeyboardButton(text="📅 Ближайшие")],
             [KeyboardButton(text="🏆 Таблица"), KeyboardButton(text="📋 История")],
+            [KeyboardButton(text="📖 Правила")],
         ],
         resize_keyboard=True,
         persistent=True,

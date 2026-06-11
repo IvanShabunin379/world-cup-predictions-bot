@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
-from handlers import start, predict, standings, upcoming, history, admin
+from handlers import start, predict, standings, upcoming, history, admin, rules
 from services.notifications import start_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +20,7 @@ async def main():
     dp.include_router(upcoming.router)
     dp.include_router(history.router)
     dp.include_router(admin.router)
+    dp.include_router(rules.router)
 
     start_scheduler(bot)
 

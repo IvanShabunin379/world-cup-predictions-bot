@@ -155,7 +155,8 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
             first_uid = _get_assignment(mid)
             partner_pred = _get_prediction(partner_id, mid, private_league["id"]) if partner_id else None
 
-            if first_uid == user_db_id:
+            if first_uid is None or first_uid == user_db_id:
+                # No assignment or it's my turn first
                 note = "" if not public_pred else "(общая готова)"
                 can_predict.append((m, note))
             else:
@@ -361,7 +362,7 @@ async def _proceed_to_league_or_confirm(message: Message, state: FSMContext):
         partner_id = nik_id if user_id == vanya_id else vanya_id
         first_uid = _get_assignment(match["id"])
         partner_pred = _get_prediction(partner_id, match["id"], private_league["id"]) if partner_id else None
-        private_available = (first_uid == user_id) or (partner_pred is not None)
+        private_available = (first_uid is None) or (first_uid == user_id) or (partner_pred is not None)
 
         if private_available:
             await state.set_state(PredictStates.choosing_league)

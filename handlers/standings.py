@@ -56,16 +56,17 @@ def _build_standings(league_id: int) -> str:
             .execute()
             .data
         )
-        total = exact = played = 0
+        total = exact = outcomes = 0
         for p in preds:
             m = p.get("matches") or {}
             if m.get("status") != "finished":
                 continue
-            played += 1
             total += p["points"] or 0
             if p["home_score"] == m["home_score"] and p["away_score"] == m["away_score"]:
                 exact += 1
-        stats[uid] = {"total": total, "exact": exact, "played": played}
+            elif (p["points"] or 0) > 0:
+                outcomes += 1
+        stats[uid] = {"total": total, "exact": exact, "outcomes": outcomes}
 
     # Sort by points desc, then by exact scores desc as tiebreak
     ranked = sorted(
@@ -74,14 +75,26 @@ def _build_standings(league_id: int) -> str:
         reverse=True,
     )
 
+    # Total finished matches in the tournament (same for everyone — shown once on top).
+    played_total = (
+        db.table("matches").select("id", count="exact").eq("status", "finished").execute().count
+    )
+
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    lines = []
-    for rank, (uid, s) in enumerate(ranked, 1):
+    lines = [f"⚽ Сыграно матчей: {played_total}\n"]
+
+    prev_key = None
+    rank = 0
+    for i, (uid, s) in enumerate(ranked, 1):
+        key = (s["total"], s["exact"])
+        if key != prev_key:           # ties (same points AND exact) share a place
+            rank = i
+            prev_key = key
         u = user_map.get(uid, {})
         name = u.get("name") or u.get("username") or str(uid)
         marker = medals.get(rank, f"{rank}.")
         lines.append(f"{marker} <b>{name}</b> — {s['total']} {_plural_points(s['total'])}")
-        lines.append(f"      🎯 точных: {s['exact']} · сыграно: {s['played']}")
+        lines.append(f"      Угадано: 🎯 точных: {s['exact']} · ✅ исходов: {s['outcomes']}")
 
     return "\n".join(lines) if lines else "Нет данных."
 

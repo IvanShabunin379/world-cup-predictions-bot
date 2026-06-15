@@ -42,3 +42,12 @@ def standings_league_kb(has_private: bool) -> InlineKeyboardMarkup:
     builder.button(text="Общая лига", callback_data="standings_public")
     builder.adjust(1)
     return builder.as_markup()
+
+
+def history_league_kb(has_private: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if has_private:
+        builder.button(text="Личная лига", callback_data="history_private")
+    builder.button(text="Общая лига", callback_data="history_public")
+    builder.adjust(1)
+    return builder.as_markup()

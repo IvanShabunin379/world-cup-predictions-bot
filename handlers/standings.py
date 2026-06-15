@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 
 from database.db import get_db
 from keyboards.inline import standings_league_kb
+from utils.text import plural_points as _plural_points
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 
 router = Router()
@@ -23,17 +24,6 @@ def _get_leagues_for_user(user_id: int) -> list[dict]:
     if not league_ids:
         return []
     return db.table("leagues").select("*").in_("id", league_ids).execute().data
-
-
-def _plural_points(n: int) -> str:
-    if 11 <= n % 100 <= 14:
-        return "очков"
-    last = n % 10
-    if last == 1:
-        return "очко"
-    if 2 <= last <= 4:
-        return "очка"
-    return "очков"
 
 
 def _build_standings(league_id: int) -> str:

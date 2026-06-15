@@ -25,6 +25,12 @@ def fmt_msk(dt: datetime) -> str:
     return f"{msk.day} {_MONTHS_GEN[msk.month]}, {msk.strftime('%H:%M')} МСК"
 
 
+def fmt_date_msk(dt: datetime) -> str:
+    """Returns '11 июня'"""
+    msk = utc_to_msk(dt)
+    return f"{msk.day} {_MONTHS_GEN[msk.month]}"
+
+
 def fmt_time(dt: datetime, reference_msk_date=None) -> str:
     """Returns '22:00' if same MSK day as reference, else '22:00 (12 июн)'"""
     msk = utc_to_msk(dt)

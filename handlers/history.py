@@ -34,7 +34,7 @@ def _get_leagues_for_user(user_id: int) -> list[dict]:
 def _pts_label(pred_h, pred_a, actual_h, actual_a, pts) -> str:
     pts = pts or 0
     if pred_h == actual_h and pred_a == actual_a:
-        emoji = "🎯"
+        emoji = "✅🎯"
     elif pts > 0:
         emoji = "✅"
     else:
@@ -81,11 +81,10 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
         )
         first_by_match = {r["match_id"]: r["first_user_id"] for r in rows}
 
-    # Sort matches by kickoff descending (newest first)
+    # Sort matches by kickoff ascending (opening match → latest finished)
     ordered = sorted(
         by_match.items(),
         key=lambda kv: kv[1]["match"]["kickoff_at"],
-        reverse=True,
     )
 
     blocks = []

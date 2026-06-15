@@ -121,16 +121,18 @@ async def cmd_upcoming(message: Message):
         by_date[msk_date].append((m, kickoff))
 
     today_msk = utc_to_msk(now_utc()).date()
+    months_gen = ["", "января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
     blocks = []
 
     for date in sorted(by_date.keys()):
+        date_label = f"{date.day} {months_gen[date.month]}"
         if date == today_msk:
-            header = "<b>Сегодня</b>"
+            header = f"<b>Сегодня, {date_label}</b>"
         elif date == today_msk + timedelta(days=1):
-            header = "<b>Завтра</b>"
+            header = f"<b>Завтра, {date_label}</b>"
         else:
-            months = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
-            header = f"<b>{date.day} {months[date.month]}</b>"
+            header = f"<b>{date_label}</b>"
 
         block_lines = [header]
 
@@ -153,11 +155,12 @@ async def cmd_upcoming(message: Message):
                         status_parts.append(f"{pl}: – (твой ход)")
                     else:
                         partner_pred = _get_prediction(partner_id, m["id"], private_league["id"]) if partner_id else None
-                        partner_name = "Ник" if user["id"] == vanya_id else "Ваня"
+                        partner_nom = "Ник" if user["id"] == vanya_id else "Ваня"
+                        partner_gen = "Ника" if user["id"] == vanya_id else "Вани"
                         if partner_pred:
-                            status_parts.append(f"{pl}: – ({partner_name} поставил)")
+                            status_parts.append(f"{pl}: – ({partner_nom} поставил)")
                         else:
-                            status_parts.append(f"{pl}: ⏳ ждём {partner_name}")
+                            status_parts.append(f"{pl}: ⏳ ждём {partner_gen}")
 
             if public_league:
                 pl = public_league["name"]

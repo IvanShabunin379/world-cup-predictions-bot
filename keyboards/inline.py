@@ -21,8 +21,8 @@ def league_choice_kb() -> InlineKeyboardMarkup:
 
 def playoff_outcome_kb(team1: str, team2: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text=f"П1: доп. вр., {team1}", callback_data="po_NP1")
-    builder.button(text=f"П2: доп. вр., {team2}", callback_data="po_NP2")
+    builder.button(text=f"НП1: доп. вр., {team1}", callback_data="po_NP1")
+    builder.button(text=f"НП2: доп. вр., {team2}", callback_data="po_NP2")
     builder.button(text=f"НПП1: пен., {team1}", callback_data="po_NPP1")
     builder.button(text=f"НПП2: пен., {team2}", callback_data="po_NPP2")
     builder.adjust(2)

@@ -132,7 +132,8 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
 
     vanya_id, nik_id = _get_vanya_nik_ids() if is_private_member else (None, None)
     partner_id = nik_id if (user_db_id == vanya_id) else vanya_id
-    partner_name = "Ника" if (user_db_id == vanya_id) else "Вани"
+    partner_nom = "Ник" if (user_db_id == vanya_id) else "Ваня"   # именительный: "Ник поставил"
+    partner_gen = "Ника" if (user_db_id == vanya_id) else "Вани"  # родительный: "ждём Ника"
 
     can_predict = []   # (match, note)
     waiting = []       # (match, reason)
@@ -161,13 +162,13 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
                 can_predict.append((m, note))
             else:
                 if partner_pred:
-                    note = f"{partner_name} поставил"
+                    note = f"{partner_nom} поставил"
                     can_predict.append((m, note))
                 else:
                     if needs_public:
-                        can_predict.append((m, f"только общая, ждём {partner_name}"))
+                        can_predict.append((m, f"только общая, ждём {partner_gen}"))
                     else:
-                        waiting.append((m, f"⏳ Ждём {partner_name}"))
+                        waiting.append((m, f"⏳ Ждём {partner_gen}"))
         else:
             # Public-only user OR private already done, public still open
             can_predict.append((m, ""))
@@ -175,8 +176,9 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
     builder = InlineKeyboardBuilder()
     for m, _ in can_predict:
         kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-        time_str = utc_to_msk(kickoff).strftime("%H:%M")
-        btn_text = f"{flag(m['home_team'])} {m['home_team']} – {flag(m['away_team'])} {m['away_team']}  {time_str}"
+        msk = utc_to_msk(kickoff)
+        dt_str = f"{msk.day:02d}.{msk.month:02d} {msk.strftime('%H:%M')}"
+        btn_text = f"{flag(m['home_team'])} {m['home_team']} – {flag(m['away_team'])} {m['away_team']}  {dt_str}"
         builder.button(text=btn_text, callback_data=f"match_{m['id']}")
     builder.adjust(1)
 
@@ -185,9 +187,8 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
         lines.append("Выбери матч для прогноза:")
         for m, note in can_predict:
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-            time_str = utc_to_msk(kickoff).strftime("%H:%M")
             hint = f"  ({note})" if note else ""
-            lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {time_str}{hint}")
+            lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}{hint}")
     else:
         lines.append("Нет матчей, на которые можно поставить прямо сейчас.")
 
@@ -195,16 +196,14 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
         lines.append("")
         for m, reason in waiting:
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-            time_str = utc_to_msk(kickoff).strftime("%H:%M")
-            lines.append(f"{reason}: {fmt_match(m['home_team'], m['away_team'])} · {time_str}")
+            lines.append(f"{reason}: {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}")
 
     if done:
         lines.append("")
         lines.append("✅ Уже сделано:")
         for m, score in done:
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-            time_str = utc_to_msk(kickoff).strftime("%H:%M")
-            lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {time_str} → {score}")
+            lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)} → {score}")
 
     matches_by_id = {m["id"]: m for m in matches}
     kb = builder.as_markup() if can_predict else None
@@ -367,8 +366,9 @@ async def _proceed_to_league_or_confirm(message: Message, state: FSMContext):
         if private_available:
             await state.set_state(PredictStates.choosing_league)
             hs, as_ = data["home_score"], data["away_score"]
+            score_str = f"{flag(match['home_team'])} {match['home_team']} {hs}:{as_} {match['away_team']} {flag(match['away_team'])}"
             await message.answer(
-                f"{match['home_team']} {hs}:{as_} {match['away_team']}\nПрименить к:",
+                f"{score_str}\nПрименить к:",
                 reply_markup=league_choice_kb(),
             )
         else:

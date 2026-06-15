@@ -175,10 +175,7 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
 
     builder = InlineKeyboardBuilder()
     for m, _ in can_predict:
-        kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-        msk = utc_to_msk(kickoff)
-        dt_str = f"{msk.day:02d}.{msk.month:02d} {msk.strftime('%H:%M')}"
-        btn_text = f"{flag(m['home_team'])} {m['home_team']} – {flag(m['away_team'])} {m['away_team']}  {dt_str}"
+        btn_text = f"{flag(m['home_team'])} {m['home_team']} – {flag(m['away_team'])} {m['away_team']}"
         builder.button(text=btn_text, callback_data=f"match_{m['id']}")
     builder.adjust(1)
 

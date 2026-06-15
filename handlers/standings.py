@@ -25,6 +25,17 @@ def _get_leagues_for_user(user_id: int) -> list[dict]:
     return db.table("leagues").select("*").in_("id", league_ids).execute().data
 
 
+def _plural_points(n: int) -> str:
+    if 11 <= n % 100 <= 14:
+        return "очков"
+    last = n % 10
+    if last == 1:
+        return "очко"
+    if 2 <= last <= 4:
+        return "очка"
+    return "очков"
+
+
 def _build_standings(league_id: int) -> str:
     db = get_db()
     members = db.table("league_members").select("user_id").eq("league_id", league_id).execute().data
@@ -32,29 +43,45 @@ def _build_standings(league_id: int) -> str:
     if not user_ids:
         return "В лиге нет участников."
 
-    scores: dict[int, int] = {}
-    for uid in user_ids:
-        total = (
-            db.table("predictions")
-            .select("points")
-            .eq("user_id", uid)
-            .eq("league_id", league_id)
-            .not_.is_("points", "null")
-            .execute()
-            .data
-        )
-        scores[uid] = sum(r["points"] for r in total if r["points"] is not None)
-
     users = db.table("users").select("id, name, username").in_("id", user_ids).execute().data
     user_map = {u["id"]: u for u in users}
 
-    sorted_users = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    stats: dict[int, dict] = {}
+    for uid in user_ids:
+        preds = (
+            db.table("predictions")
+            .select("home_score, away_score, points, matches(home_score, away_score, status)")
+            .eq("user_id", uid)
+            .eq("league_id", league_id)
+            .execute()
+            .data
+        )
+        total = exact = played = 0
+        for p in preds:
+            m = p.get("matches") or {}
+            if m.get("status") != "finished":
+                continue
+            played += 1
+            total += p["points"] or 0
+            if p["home_score"] == m["home_score"] and p["away_score"] == m["away_score"]:
+                exact += 1
+        stats[uid] = {"total": total, "exact": exact, "played": played}
 
+    # Sort by points desc, then by exact scores desc as tiebreak
+    ranked = sorted(
+        stats.items(),
+        key=lambda kv: (kv[1]["total"], kv[1]["exact"]),
+        reverse=True,
+    )
+
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     lines = []
-    for rank, (uid, pts) in enumerate(sorted_users, 1):
+    for rank, (uid, s) in enumerate(ranked, 1):
         u = user_map.get(uid, {})
         name = u.get("name") or u.get("username") or str(uid)
-        lines.append(f"{rank}. {name} — {pts} очков")
+        marker = medals.get(rank, f"{rank}.")
+        lines.append(f"{marker} <b>{name}</b> — {s['total']} {_plural_points(s['total'])}")
+        lines.append(f"      🎯 точных: {s['exact']} · сыграно: {s['played']}")
 
     return "\n".join(lines) if lines else "Нет данных."
 
@@ -75,7 +102,7 @@ async def cmd_standings(message: Message, state: FSMContext):
     has_private = any(l["type"] == "private" for l in leagues)
     if len(leagues) == 1:
         text = _build_standings(leagues[0]["id"])
-        await message.answer(f"🏆 {leagues[0]['name']}\n\n{text}")
+        await message.answer(f"🏆 <b>{leagues[0]['name']}</b>\n\n{text}", parse_mode="HTML")
     else:
         await state.update_data(leagues=leagues)
         await message.answer(
@@ -96,4 +123,4 @@ async def handle_standings_choice(callback: CallbackQuery, state: FSMContext):
 
     text = _build_standings(league["id"])
     await callback.answer()
-    await callback.message.edit_text(f"🏆 {league['name']}\n\n{text}")
+    await callback.message.edit_text(f"🏆 <b>{league['name']}</b>\n\n{text}", parse_mode="HTML")

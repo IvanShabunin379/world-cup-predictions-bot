@@ -4,6 +4,7 @@ from aiogram.types import Message
 
 from database.db import get_db
 from utils.timezone import fmt_msk
+from utils.flags import fmt_match
 from datetime import timezone
 from dateutil import parser as dtparser
 
@@ -29,16 +30,24 @@ async def cmd_history(message: Message):
         db.table("predictions")
         .select("*, matches(home_team, away_team, kickoff_at, home_score, away_score, status, group_name)")
         .eq("user_id", user_id)
-        .not_.is_("matches.status", "upcoming")
-        .order("matches.kickoff_at", desc=True)
-        .limit(10)
         .execute()
         .data
     )
 
+    # Keep only finished matches, sort by kickoff descending, take last 10.
+    finished = [
+        p for p in preds
+        if (p.get("matches") or {}).get("status") == "finished"
+    ]
+    finished.sort(key=lambda p: p["matches"]["kickoff_at"], reverse=True)
+    preds = finished[:10]
+
     if not preds:
         await message.answer("У тебя пока нет завершённых прогнозов.")
         return
+
+    league_rows = db.table("leagues").select("id, name").execute().data
+    league_names = {l["id"]: l["name"] for l in league_rows}
 
     lines = ["📋 Последние прогнозы:\n"]
     for p in preds:
@@ -48,13 +57,14 @@ async def cmd_history(message: Message):
         kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
         actual = ""
         if m["home_score"] is not None:
-            actual = f"Счёт: {m['home_score']}:{m['away_score']}"
+            actual = f"· Счёт: {m['home_score']}:{m['away_score']}"
         points_str = f"+{p['points']} очков" if p["points"] is not None else "ожидает"
+        league_name = league_names.get(p["league_id"], "")
 
         lines.append(
-            f"⚽ {m['home_team']} — {m['away_team']}\n"
+            f"{fmt_match(m['home_team'], m['away_team'])}\n"
             f"   {fmt_msk(kickoff)}\n"
-            f"   Прогноз: {p['home_score']}:{p['away_score']}  {actual}\n"
+            f"   [{league_name}] Прогноз: {p['home_score']}:{p['away_score']}  {actual}\n"
             f"   {points_str}"
         )
 

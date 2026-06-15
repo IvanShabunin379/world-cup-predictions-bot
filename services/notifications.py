@@ -38,8 +38,33 @@ def start_scheduler(bot):
         id="evening_reminder",
         replace_existing=True,
     )
+    # Hourly self-healing catch-up: fetch results for any finished match the
+    # bot may have missed while offline.
+    scheduler.add_job(
+        _catch_up_results,
+        trigger=CronTrigger(minute=20, timezone="UTC"),
+        args=[bot],
+        id="catch_up_results",
+        replace_existing=True,
+    )
     scheduler.start()
     asyncio.create_task(_schedule_result_jobs(bot))
+    asyncio.create_task(_catch_up_results(bot))
+
+
+async def _catch_up_results(bot):
+    """Process any past matches still marked 'upcoming' (missed while offline)."""
+    db = get_db()
+    try:
+        matches = db.table("matches").select("id, kickoff_at").eq("status", "upcoming").execute().data
+    except Exception:
+        return
+    now = now_utc()
+    for m in matches:
+        kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
+        # Match should be over (kickoff + ~2h) before we try to fetch a result.
+        if kickoff + timedelta(hours=2) <= now:
+            await _fetch_and_send_results(bot, m["id"])
 
 
 async def _schedule_result_jobs(bot):
@@ -176,7 +201,7 @@ async def _reveal_public_predictions(bot, match_id: int):
 
 
 async def _fetch_and_send_results(bot, match_id: int):
-    from services.api_football import fetch_fixtures_by_date, parse_result
+    from services.espn import fetch_match_result
 
     db = get_db()
     match = db.table("matches").select("*").eq("id", match_id).execute().data
@@ -184,21 +209,14 @@ async def _fetch_and_send_results(bot, match_id: int):
         return
     match = match[0]
 
-    kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
-    date_str = kickoff.strftime("%Y-%m-%d")
-
     try:
-        fixtures = await fetch_fixtures_by_date(date_str)
-        result = None
-        for f in fixtures:
-            ht = f.get("teams", {}).get("home", {}).get("name", "")
-            if match["home_team"][:4].lower() in ht.lower() or ht.lower() in match["home_team"].lower():
-                result = parse_result(f)
-                break
+        result = await fetch_match_result(
+            match["kickoff_at"], match["home_team"], match["away_team"]
+        )
     except Exception:
         result = None
 
-    if not result or result["home_score"] is None:
+    if not result or not result.get("completed") or result["home_score"] is None:
         retry_time = now_utc() + timedelta(minutes=30)
         scheduler.add_job(
             _fetch_and_send_results,

@@ -56,6 +56,8 @@ def _build_standings(league_id: int) -> str:
             .execute()
             .data
         )
+        if not preds:
+            continue  # skip users who never made a prediction
         total = exact = outcomes = 0
         for p in preds:
             m = p.get("matches") or {}
@@ -94,7 +96,7 @@ def _build_standings(league_id: int) -> str:
         name = u.get("name") or u.get("username") or str(uid)
         marker = medals.get(rank, f"{rank}.")
         lines.append(f"{marker} <b>{name}</b> — {s['total']} {_plural_points(s['total'])}")
-        lines.append(f"      Угадано: 🎯 точных: {s['exact']} · ✅ исходов: {s['outcomes']}")
+        lines.append(f"      Угадано: 🎯 точных счётов: {s['exact']} · ✅ исходов: {s['outcomes']}")
 
     return "\n".join(lines) if lines else "Нет данных."
 

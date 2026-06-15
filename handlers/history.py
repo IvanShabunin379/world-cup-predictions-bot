@@ -166,9 +166,8 @@ async def cmd_history(message: Message, state: FSMContext):
         league = leagues[0]
         await _send_history(message, league, league["type"] == "private")
     else:
-        has_private = any(l["type"] == "private" for l in leagues)
         await state.update_data(leagues=leagues)
-        await message.answer("Выбери лигу:", reply_markup=history_league_kb(has_private))
+        await message.answer("Выбери лигу:", reply_markup=history_league_kb(leagues))
 
 
 @router.callback_query(F.data.startswith("history_"))

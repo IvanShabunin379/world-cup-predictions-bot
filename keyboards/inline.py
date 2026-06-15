@@ -35,19 +35,21 @@ def predict_match_kb(match_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def standings_league_kb(has_private: bool) -> InlineKeyboardMarkup:
+def _league_choice_kb(leagues: list[dict], prefix: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if has_private:
-        builder.button(text="Личная лига", callback_data="standings_private")
-    builder.button(text="Общая лига", callback_data="standings_public")
+    private = next((l for l in leagues if l["type"] == "private"), None)
+    public = next((l for l in leagues if l["type"] == "public"), None)
+    if private:
+        builder.button(text=private["name"], callback_data=f"{prefix}_private")
+    if public:
+        builder.button(text=public["name"], callback_data=f"{prefix}_public")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def history_league_kb(has_private: bool) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    if has_private:
-        builder.button(text="Личная лига", callback_data="history_private")
-    builder.button(text="Общая лига", callback_data="history_public")
-    builder.adjust(1)
-    return builder.as_markup()
+def standings_league_kb(leagues: list[dict]) -> InlineKeyboardMarkup:
+    return _league_choice_kb(leagues, "standings")
+
+
+def history_league_kb(leagues: list[dict]) -> InlineKeyboardMarkup:
+    return _league_choice_kb(leagues, "history")

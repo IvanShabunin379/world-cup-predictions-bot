@@ -104,7 +104,6 @@ async def cmd_standings(message: Message, state: FSMContext):
         await message.answer("Ты не состоишь ни в одной лиге.")
         return
 
-    has_private = any(l["type"] == "private" for l in leagues)
     if len(leagues) == 1:
         text = _build_standings(leagues[0]["id"])
         await message.answer(f"🏆 <b>{leagues[0]['name']}</b>\n\n{text}", parse_mode="HTML")
@@ -112,7 +111,7 @@ async def cmd_standings(message: Message, state: FSMContext):
         await state.update_data(leagues=leagues)
         await message.answer(
             "Выбери лигу:",
-            reply_markup=standings_league_kb(has_private),
+            reply_markup=standings_league_kb(leagues),
         )
 
 

@@ -245,6 +245,7 @@ async def _fetch_and_send_results(bot, match_id: int):
                 home_score, away_score, match["outcome"],
             )
         db.table("predictions").update({"points": pts}).eq("id", pred["id"]).execute()
+        pred["points"] = pts  # keep in-memory copy in sync for the messages below
 
     match_str = f"{flag(match['home_team'])} {match['home_team']} {home_score}:{away_score} {match['away_team']} {flag(match['away_team'])}"
     result_text = f"🏁 Матч завершён!\n\n{match_str}\n\n"

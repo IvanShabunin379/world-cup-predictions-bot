@@ -453,12 +453,14 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
 
             if first_uid != user_id and partner_pred:
                 if partner_pred["home_score"] == hs and partner_pred["away_score"] == as_:
+                    my_name = "Ваня" if user_id == vanya_id else "Ник"
+                    partner_name = "Ник" if user_id == vanya_id else "Ваня"
+                    partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
                     await callback.answer(
-                        f"Этот счёт занят партнёром ({hs}:{as_}). Выбери другой!", show_alert=True
+                        f"{partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
+                        show_alert=True,
                     )
                     # Notify the first predictor that the brother went for the same score
-                    my_name = "Ваня" if user_id == vanya_id else "Ник"
-                    partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
                     match_str = fmt_match(match["home_team"], match["away_team"])
                     try:
                         await callback.bot.send_message(

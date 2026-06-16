@@ -456,6 +456,18 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                     await callback.answer(
                         f"Этот счёт занят партнёром ({hs}:{as_}). Выбери другой!", show_alert=True
                     )
+                    # Notify the first predictor that the brother went for the same score
+                    my_name = "Ваня" if user_id == vanya_id else "Ник"
+                    partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
+                    match_str = fmt_match(match["home_team"], match["away_team"])
+                    try:
+                        await callback.bot.send_message(
+                            partner_tg,
+                            f"😏 {my_name} хотел поставить тот же счёт, что и ты "
+                            f"({hs}:{as_}) на {match_str}! Придётся ему выбрать другой.",
+                        )
+                    except Exception:
+                        pass
                     await state.set_state(PredictStates.entering_score)
                     await callback.message.answer("Введи другой счёт:")
                     return

@@ -126,7 +126,7 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
                     None,
                 )
                 if blocked_name:
-                    lines.append(f"😏 {blocked_name} хотел поставить так же, но не смог")
+                    lines.append(f"🤫 {blocked_name} хотел поставить так же, но не смог")
 
         # Order predictions: first predictor on top (private), then by points desc
         def sort_key(p):

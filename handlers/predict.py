@@ -457,7 +457,7 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                     partner_name = "Ник" if user_id == vanya_id else "Ваня"
                     partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
                     await callback.answer(
-                        f"{partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
+                        f"🙅 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
                         show_alert=True,
                     )
                     # Notify the first predictor that the brother went for the same score

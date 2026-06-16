@@ -460,6 +460,14 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                         f"🚫 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
                         show_alert=True,
                     )
+                    # Record that this brother wanted the same score (for /history note)
+                    try:
+                        db.table("blocked_attempts").upsert(
+                            {"match_id": match["id"], "user_id": user_id},
+                            on_conflict="match_id,user_id",
+                        ).execute()
+                    except Exception:
+                        pass
                     # Notify the first predictor that the brother went for the same score
                     match_str = fmt_match(match["home_team"], match["away_team"])
                     try:

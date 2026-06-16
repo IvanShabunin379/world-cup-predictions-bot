@@ -80,6 +80,19 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
             .data
         )
         first_by_match = {r["match_id"]: r["first_user_id"] for r in rows}
+        try:
+            blk = (
+                db.table("blocked_attempts")
+                .select("match_id, user_id")
+                .in_("match_id", list(by_match.keys()))
+                .execute()
+                .data
+            )
+            blocked_by_match = {r["match_id"]: r["user_id"] for r in blk}
+        except Exception:
+            blocked_by_match = {}
+    else:
+        blocked_by_match = {}
 
     # Sort matches by kickoff ascending (opening match → latest finished)
     ordered = sorted(
@@ -105,6 +118,15 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
             )
             if first_name:
                 lines.append(f"Первым ставил: {first_name}")
+
+            blocked_uid = blocked_by_match.get(mid)
+            if blocked_uid:
+                blocked_name = next(
+                    (p["users"]["name"] for p in data["preds"] if p["user_id"] == blocked_uid),
+                    None,
+                )
+                if blocked_name:
+                    lines.append(f"😏 {blocked_name} хотел поставить так же, но не смог")
 
         # Order predictions: first predictor on top (private), then by points desc
         def sort_key(p):

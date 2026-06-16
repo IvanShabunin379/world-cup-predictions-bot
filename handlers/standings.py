@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from database.db import get_db
 from keyboards.inline import standings_league_kb
 from utils.text import plural_points as _plural_points
+from utils.timezone import fmt_msk, now_utc
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 
 router = Router()
@@ -73,7 +74,10 @@ def _build_standings(league_id: int) -> str:
     )
 
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    lines = [f"⚽ Сыграно матчей: {played_total}\n"]
+    lines = [
+        f"🕐 {fmt_msk(now_utc())}",
+        f"⚽ Сыграно матчей: {played_total}\n",
+    ]
 
     prev_key = None
     rank = 0
@@ -86,7 +90,8 @@ def _build_standings(league_id: int) -> str:
         name = u.get("name") or u.get("username") or str(uid)
         marker = medals.get(rank, f"{rank}.")
         lines.append(f"{marker} <b>{name}</b> — {s['total']} {_plural_points(s['total'])}")
-        lines.append(f"      Угадано: 🎯 точный счёт: {s['exact']} · ✅ исход: {s['outcomes']}")
+        lines.append(f"      🎯 Точный счёт: {s['exact']}")
+        lines.append(f"      ✅ Исход: {s['outcomes']}")
 
     return "\n".join(lines) if lines else "Нет данных."
 

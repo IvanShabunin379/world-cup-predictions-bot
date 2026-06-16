@@ -473,7 +473,7 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                     try:
                         await callback.bot.send_message(
                             partner_tg,
-                            f"😏 {my_name} хотел поставить тот же счёт, что и ты "
+                            f"🤫 {my_name} хотел поставить тот же счёт, что и ты "
                             f"({hs}:{as_}) на {match_str}! Придётся ему выбрать другой.",
                         )
                     except Exception:

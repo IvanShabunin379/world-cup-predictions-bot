@@ -148,19 +148,13 @@ async def cmd_upcoming(message: Message):
                 if pred:
                     status_parts.append(f"{pl}: {pred['home_score']}:{pred['away_score']}")
                 else:
-                    first_uid = _get_assignment(m["id"])
-                    if first_uid is None:
-                        status_parts.append(f"{pl}: –")
-                    elif first_uid == user["id"]:
-                        status_parts.append(f"{pl}: – (твой ход)")
+                    # No waiting — you can always predict. Note if the brother already did.
+                    partner_pred = _get_prediction(partner_id, m["id"], private_league["id"]) if partner_id else None
+                    partner_nom = "Ник" if user["id"] == vanya_id else "Ваня"
+                    if partner_pred:
+                        status_parts.append(f"{pl}: – ({partner_nom} уже поставил)")
                     else:
-                        partner_pred = _get_prediction(partner_id, m["id"], private_league["id"]) if partner_id else None
-                        partner_nom = "Ник" if user["id"] == vanya_id else "Ваня"
-                        partner_gen = "Ника" if user["id"] == vanya_id else "Вани"
-                        if partner_pred:
-                            status_parts.append(f"{pl}: – ({partner_nom} поставил)")
-                        else:
-                            status_parts.append(f"{pl}: ⏳ ждём {partner_gen}")
+                        status_parts.append(f"{pl}: – (твой ход)")
 
             if public_league:
                 pl = public_league["name"]

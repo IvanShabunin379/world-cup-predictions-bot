@@ -153,22 +153,10 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
             continue
 
         if is_private_member and private_league and needs_private:
-            first_uid = _get_assignment(mid)
+            # No waiting for your turn — you can predict anytime.
             partner_pred = _get_prediction(partner_id, mid, private_league["id"]) if partner_id else None
-
-            if first_uid is None or first_uid == user_db_id:
-                # No assignment or it's my turn first
-                note = "" if not public_pred else "(общая готова)"
-                can_predict.append((m, note))
-            else:
-                if partner_pred:
-                    note = f"{partner_nom} поставил"
-                    can_predict.append((m, note))
-                else:
-                    if needs_public:
-                        can_predict.append((m, f"только общая, ждём {partner_gen}"))
-                    else:
-                        waiting.append((m, f"⏳ Ждём {partner_gen}"))
+            note = f"{partner_nom} уже поставил" if partner_pred else ""
+            can_predict.append((m, note))
         else:
             # Public-only user OR private already done, public still open
             can_predict.append((m, ""))
@@ -350,29 +338,15 @@ async def _proceed_to_league_or_confirm(message: Message, state: FSMContext):
     has_public = any(l["type"] == "public" for l in leagues)
 
     if is_private_member and has_private and has_public:
-        # Check if private league is actually available for this match
-        user_id = data["user_id"]
+        # No waiting — private is always available; let the user pick the league(s).
         match = data["match"]
-        private_league = next(l for l in leagues if l["type"] == "private")
-        vanya_id, nik_id = _get_vanya_nik_ids()
-        partner_id = nik_id if user_id == vanya_id else vanya_id
-        first_uid = _get_assignment(match["id"])
-        partner_pred = _get_prediction(partner_id, match["id"], private_league["id"]) if partner_id else None
-        private_available = (first_uid is None) or (first_uid == user_id) or (partner_pred is not None)
-
-        if private_available:
-            await state.set_state(PredictStates.choosing_league)
-            hs, as_ = data["home_score"], data["away_score"]
-            score_str = f"{flag(match['home_team'])} {match['home_team']} {hs}:{as_} {match['away_team']} {flag(match['away_team'])}"
-            await message.answer(
-                f"{score_str}\nПрименить к:",
-                reply_markup=league_choice_kb(),
-            )
-        else:
-            # Private blocked — force public only
-            selected = [l["id"] for l in leagues if l["type"] == "public"]
-            await state.update_data(selected_leagues=selected)
-            await _show_confirm(message, state)
+        await state.set_state(PredictStates.choosing_league)
+        hs, as_ = data["home_score"], data["away_score"]
+        score_str = f"{flag(match['home_team'])} {match['home_team']} {hs}:{as_} {match['away_team']} {flag(match['away_team'])}"
+        await message.answer(
+            f"{score_str}\nПрименить к:",
+            reply_markup=league_choice_kb(),
+        )
     else:
         league = leagues[0]
         await state.update_data(selected_leagues=[league["id"]])
@@ -439,48 +413,52 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
         if _get_prediction(user_id, match["id"], league_id):
             continue
 
-        # Private league sequential check
+        # Private league: no waiting. Only block if the SAME score is already taken
+        # by the brother — then the later predictor must change.
         league = next((l for l in data["leagues"] if l["id"] == league_id), None)
         if league and league["type"] == "private":
-            first_uid = _get_assignment(match["id"])
             vanya_id, nik_id = _get_vanya_nik_ids()
             partner_id = nik_id if user_id == vanya_id else vanya_id
             partner_pred = _get_prediction(partner_id, match["id"], league_id) if partner_id else None
 
-            if first_uid != user_id and not partner_pred:
-                await callback.answer("Подожди — партнёр ещё не сделал прогноз!", show_alert=True)
+            if partner_pred and partner_pred["home_score"] == hs and partner_pred["away_score"] == as_:
+                my_name = "Ваня" if user_id == vanya_id else "Ник"
+                partner_name = "Ник" if user_id == vanya_id else "Ваня"
+                partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
+                await callback.answer(
+                    f"🚫 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
+                    show_alert=True,
+                )
+                # Record that this brother wanted the same score (for /history note)
+                try:
+                    db.table("blocked_attempts").upsert(
+                        {"match_id": match["id"], "user_id": user_id},
+                        on_conflict="match_id,user_id",
+                    ).execute()
+                except Exception:
+                    pass
+                match_str = fmt_match(match["home_team"], match["away_team"])
+                try:
+                    await callback.bot.send_message(
+                        partner_tg,
+                        f"🤫 {my_name} хотел поставить тот же счёт, что и ты "
+                        f"({hs}:{as_}) на {match_str}! Придётся ему выбрать другой.",
+                    )
+                except Exception:
+                    pass
+                await state.set_state(PredictStates.entering_score)
+                await callback.message.answer("Введи другой счёт:")
                 return
 
-            if first_uid != user_id and partner_pred:
-                if partner_pred["home_score"] == hs and partner_pred["away_score"] == as_:
-                    my_name = "Ваня" if user_id == vanya_id else "Ник"
-                    partner_name = "Ник" if user_id == vanya_id else "Ваня"
-                    partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
-                    await callback.answer(
-                        f"🚫 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
-                        show_alert=True,
-                    )
-                    # Record that this brother wanted the same score (for /history note)
-                    try:
-                        db.table("blocked_attempts").upsert(
-                            {"match_id": match["id"], "user_id": user_id},
-                            on_conflict="match_id,user_id",
-                        ).execute()
-                    except Exception:
-                        pass
-                    # Notify the first predictor that the brother went for the same score
-                    match_str = fmt_match(match["home_team"], match["away_team"])
-                    try:
-                        await callback.bot.send_message(
-                            partner_tg,
-                            f"🤫 {my_name} хотел поставить тот же счёт, что и ты "
-                            f"({hs}:{as_}) на {match_str}! Придётся ему выбрать другой.",
-                        )
-                    except Exception:
-                        pass
-                    await state.set_state(PredictStates.entering_score)
-                    await callback.message.answer("Введи другой счёт:")
-                    return
+            # If you're the first to bet on this match, record that you went first.
+            if not partner_pred:
+                try:
+                    db.table("match_assignments").upsert(
+                        {"match_id": match["id"], "first_user_id": user_id},
+                        on_conflict="match_id",
+                    ).execute()
+                except Exception:
+                    pass
 
         db.table("predictions").insert({
             "user_id": user_id,
@@ -516,13 +494,14 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
         if not vanya_id or not nik_id:
             continue
 
-        first_uid = _get_assignment(match["id"])
+        partner_id = nik_id if user_id == vanya_id else vanya_id
+        partner_pred = _get_prediction(partner_id, match["id"], league_id)
         match_str = _fmt_match(match["home_team"], match["away_team"])
         my_name = "Ваня" if user_id == vanya_id else "Ник"
         partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
 
-        if first_uid == user_id:
-            # Первый поставил — уведомляем партнёра
+        if not partner_pred:
+            # Брат ещё не ставил — я первый, уведомляем его
             try:
                 await callback.bot.send_message(
                     partner_tg,
@@ -531,7 +510,8 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
             except Exception:
                 pass
         else:
-            # Второй поставил — раскрываем оба прогноза обоим, первый предиктор идёт первым
+            # Оба поставили — раскрываем оба прогноза обоим, первый предиктор идёт первым
+            first_uid = _get_assignment(match["id"])
             vanya_pred = _get_prediction(vanya_id, match["id"], league_id)
             nik_pred = _get_prediction(nik_id, match["id"], league_id)
             vanya_score = f"{vanya_pred['home_score']}:{vanya_pred['away_score']}" if vanya_pred else "–"

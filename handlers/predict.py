@@ -422,43 +422,57 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
             partner_pred = _get_prediction(partner_id, match["id"], league_id) if partner_id else None
 
             if partner_pred and partner_pred["home_score"] == hs and partner_pred["away_score"] == as_:
+                # Score collision — priority by stratification, not prediction time
+                assignment_first_id = _get_assignment(match["id"])
+                i_am_first = (assignment_first_id == user_id) if assignment_first_id else True
                 my_name = "Ваня" if user_id == vanya_id else "Ник"
                 partner_name = "Ник" if user_id == vanya_id else "Ваня"
                 partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
-                await callback.answer(
-                    f"🚫 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
-                    show_alert=True,
-                )
-                # Record that this brother wanted the same score (for /history note)
-                try:
-                    db.table("blocked_attempts").upsert(
-                        {"match_id": match["id"], "user_id": user_id},
-                        on_conflict="match_id,user_id",
-                    ).execute()
-                except Exception:
-                    pass
                 match_str = fmt_match(match["home_team"], match["away_team"])
-                try:
-                    await callback.bot.send_message(
-                        partner_tg,
-                        f"🤫 {my_name} хотел поставить тот же счёт, что и ты "
-                        f"({hs}:{as_}) на {match_str}! Придётся ему выбрать другой.",
-                    )
-                except Exception:
-                    pass
-                await state.set_state(PredictStates.entering_score)
-                await callback.message.answer("Введи другой счёт:")
-                return
 
-            # If you're the first to bet on this match, record that you went first.
-            if not partner_pred:
-                try:
-                    db.table("match_assignments").upsert(
-                        {"match_id": match["id"], "first_user_id": user_id},
-                        on_conflict="match_id",
-                    ).execute()
-                except Exception:
-                    pass
+                if not i_am_first:
+                    # I am second by assignment — must choose a different score
+                    await callback.answer(
+                        f"🚫 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
+                        show_alert=True,
+                    )
+                    try:
+                        db.table("blocked_attempts").upsert(
+                            {"match_id": match["id"], "user_id": user_id},
+                            on_conflict="match_id,user_id",
+                        ).execute()
+                    except Exception:
+                        pass
+                    try:
+                        await callback.bot.send_message(
+                            partner_tg,
+                            f"🤫 {my_name} хотел поставить тот же счёт, что и ты "
+                            f"({hs}:{as_}) на {match_str}! Придётся ему выбрать другой.",
+                        )
+                    except Exception:
+                        pass
+                    await state.set_state(PredictStates.entering_score)
+                    await callback.message.answer("Введи другой счёт:")
+                    return
+                else:
+                    # I am first by assignment — partner (second) must give way
+                    try:
+                        db.table("predictions").delete() \
+                            .eq("user_id", partner_id) \
+                            .eq("match_id", match["id"]) \
+                            .eq("league_id", league_id) \
+                            .execute()
+                    except Exception:
+                        pass
+                    try:
+                        await callback.bot.send_message(
+                            partner_tg,
+                            f"🚫 {my_name} поставил {hs}:{as_} на {match_str} — этот счёт теперь занят.\n"
+                            f"Тебе нужно поставить прогноз заново (выбери другой счёт).",
+                        )
+                    except Exception:
+                        pass
+                    # Fall through to save current user's prediction
 
         db.table("predictions").insert({
             "user_id": user_id,

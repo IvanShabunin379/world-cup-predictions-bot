@@ -88,13 +88,23 @@ async def _schedule_result_jobs(bot):
         return
 
     now = now_utc()
+    # Track how many matches share the same kickoff so we can stagger notifications.
+    # Two concurrent reveal jobs sending to the same users in the same second would
+    # hit Telegram's 1-msg/sec per-chat limit; 15-second gaps between simultaneous
+    # matches prevent that.
+    kickoff_seq: dict[str, int] = {}
     for m in matches:
         kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
         results_time = kickoff + timedelta(hours=2, minutes=15)
-        if kickoff > now:
+
+        seq = kickoff_seq.get(m["kickoff_at"], 0)
+        kickoff_seq[m["kickoff_at"]] = seq + 1
+        reveal_time = kickoff + timedelta(seconds=seq * 15)
+
+        if reveal_time > now:
             scheduler.add_job(
                 _reveal_public_predictions,
-                trigger=DateTrigger(run_date=kickoff),
+                trigger=DateTrigger(run_date=reveal_time),
                 args=[bot, m["id"]],
                 id=f"reveal_{m['id']}",
                 replace_existing=True,

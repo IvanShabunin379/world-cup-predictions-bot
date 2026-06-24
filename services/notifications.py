@@ -98,6 +98,7 @@ async def _schedule_result_jobs(bot):
                 args=[bot, m["id"]],
                 id=f"reveal_{m['id']}",
                 replace_existing=True,
+                misfire_grace_time=300,
             )
         if results_time > now:
             scheduler.add_job(
@@ -106,19 +107,24 @@ async def _schedule_result_jobs(bot):
                 args=[bot, m["id"]],
                 id=f"results_{m['id']}",
                 replace_existing=True,
+                misfire_grace_time=300,
             )
 
 
 async def _morning_digest(bot):
     """10:00 MSK — digest of all matches today (next 24h)."""
     now = now_utc()
-    await _send_reminders(bot, now, now + timedelta(hours=24), "⏰ Сегодня")
+    # Floor to the current minute so matches at exactly 10:00 MSK are included
+    window_start = now.replace(second=0, microsecond=0)
+    await _send_reminders(bot, window_start, window_start + timedelta(hours=24), "⏰ Сегодня")
 
 
 async def _evening_reminder(bot):
     """20:00 MSK — reminder for matches in next 12h."""
     now = now_utc()
-    await _send_reminders(bot, now, now + timedelta(hours=12), "🔔 Скоро")
+    # Floor to the current minute so matches at exactly 20:00 MSK are included
+    window_start = now.replace(second=0, microsecond=0)
+    await _send_reminders(bot, window_start, window_start + timedelta(hours=12), "🔔 Скоро")
 
 
 async def _send_reminders(bot, window_start, window_end, prefix: str):
@@ -127,7 +133,7 @@ async def _send_reminders(bot, window_start, window_end, prefix: str):
         db.table("matches")
         .select("*")
         .eq("status", "upcoming")
-        .gt("kickoff_at", window_start.isoformat())
+        .gte("kickoff_at", window_start.isoformat())
         .lte("kickoff_at", window_end.isoformat())
         .order("kickoff_at")
         .execute()
@@ -179,16 +185,16 @@ async def _reveal_public_predictions(bot, match_id: int):
         .execute()
         .data
     )
-    if not preds:
-        return
 
     match_str = fmt_match(match["home_team"], match["away_team"])
-    lines = [f"🏁 Матч начался! {match_str}\n", "Прогнозы футбольных аналитиков Весенних Зорь:"]
-    for p in sorted(preds, key=lambda x: x.get("created_at", "")):
-        name = (p.get("users") or {}).get("name") or "?"
-        lines.append(f"  {name}: {p['home_score']}:{p['away_score']}")
-
-    text = "\n".join(lines)
+    if preds:
+        lines = [f"🏁 Матч начался! {match_str}\n", "Прогнозы футбольных аналитиков Весенних Зорь:"]
+        for p in sorted(preds, key=lambda x: x.get("created_at", "")):
+            name = (p.get("users") or {}).get("name") or "?"
+            lines.append(f"  {name}: {p['home_score']}:{p['away_score']}")
+        text = "\n".join(lines)
+    else:
+        text = f"🏁 Матч начался! {match_str}"
     members = db.table("league_members").select("user_id").eq("league_id", public_id).execute().data
     user_ids = [m["user_id"] for m in members]
     users = db.table("users").select("id, telegram_id").in_("id", user_ids).execute().data

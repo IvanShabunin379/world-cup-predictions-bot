@@ -477,7 +477,7 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                         await callback.bot.send_message(
                             partner_tg,
                             f"🚫 {my_name} поставил {hs}:{as_} на {match_str} — этот счёт теперь занят.\n"
-                            f"Тебе нужно поставить прогноз заново (выбери другой счёт).",
+                            f"Тебе нужно сделать прогноз заново (выбери другой счёт).",
                         )
                     except Exception:
                         pass
@@ -536,7 +536,7 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
             try:
                 await callback.bot.send_message(
                     partner_tg,
-                    f"⚽ {my_name} поставил прогноз на {match_str}.\nТвой ход!",
+                    f"⚽ {my_name} сделал прогноз на {match_str}.\nТвой ход!",
                 )
             except Exception:
                 pass

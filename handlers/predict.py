@@ -472,11 +472,20 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                             .execute()
                     except Exception:
                         pass
+                    partner_gen = "Ника" if user_id == vanya_id else "Вани"
                     try:
                         await callback.bot.send_message(
                             partner_tg,
                             f"🚫 {my_name} поставил {hs}:{as_} на {match_str} — этот счёт теперь занят.\n"
                             f"Тебе нужно поставить прогноз заново (выбери другой счёт).",
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await callback.message.answer(
+                            f"🤫 У {partner_gen} стоял тот же счёт ({hs}:{as_}) на {match_str} — "
+                            f"ты первый по жребию, его прогноз аннулирован. "
+                            f"Ему нужно выбрать другой счёт.",
                         )
                     except Exception:
                         pass

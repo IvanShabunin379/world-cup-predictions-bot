@@ -154,7 +154,7 @@ async def cmd_upcoming(message: Message):
                     if partner_pred:
                         status_parts.append(f"{pl}: – ({partner_nom} уже поставил)")
                     else:
-                        status_parts.append(f"{pl}: – (твой ход)")
+                        status_parts.append(f"{pl}: –")
 
             if public_league:
                 pl = public_league["name"]

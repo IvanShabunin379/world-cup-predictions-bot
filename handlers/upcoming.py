@@ -140,16 +140,18 @@ async def cmd_upcoming(message: Message):
             time_str = utc_to_msk(kickoff).strftime("%H:%M")
             match_line = f"{fmt_match(m['home_team'], m['away_team'])} · {time_str} МСК"
 
-            # Show just the score if predicted (private takes priority for Ваня/Ник)
-            any_pred = None
-            if private_league:
-                any_pred = _get_prediction(user["id"], m["id"], private_league["id"])
-            if not any_pred and public_league:
-                any_pred = _get_prediction(user["id"], m["id"], public_league["id"])
+            priv_pred = _get_prediction(user["id"], m["id"], private_league["id"]) if private_league else None
+            pub_pred = _get_prediction(user["id"], m["id"], public_league["id"]) if public_league else None
 
             block_lines.append(match_line)
-            if any_pred:
-                block_lines.append(f"   → {any_pred['home_score']}:{any_pred['away_score']}")
+            if priv_pred or pub_pred:
+                priv_s = f"{priv_pred['home_score']}:{priv_pred['away_score']}" if priv_pred else None
+                pub_s = f"{pub_pred['home_score']}:{pub_pred['away_score']}" if pub_pred else None
+                if priv_s and pub_s and priv_s != pub_s:
+                    score_str = f"{priv_s} / {pub_s}"
+                else:
+                    score_str = priv_s or pub_s
+                block_lines.append(f"   → {score_str}")
 
         blocks.append("\n".join(block_lines))
 

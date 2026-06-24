@@ -140,33 +140,16 @@ async def cmd_upcoming(message: Message):
             time_str = utc_to_msk(kickoff).strftime("%H:%M")
             match_line = f"{fmt_match(m['home_team'], m['away_team'])} · {time_str} МСК"
 
-            status_parts = []
-
+            # Show just the score if predicted (private takes priority for Ваня/Ник)
+            any_pred = None
             if private_league:
-                pl = private_league["name"]
-                pred = _get_prediction(user["id"], m["id"], private_league["id"])
-                if pred:
-                    status_parts.append(f"{pl}: {pred['home_score']}:{pred['away_score']}")
-                else:
-                    # No waiting — you can always predict. Note if the brother already did.
-                    partner_pred = _get_prediction(partner_id, m["id"], private_league["id"]) if partner_id else None
-                    partner_nom = "Ник" if user["id"] == vanya_id else "Ваня"
-                    if partner_pred:
-                        status_parts.append(f"{pl}: – ({partner_nom} уже поставил)")
-                    else:
-                        status_parts.append(f"{pl}: –")
-
-            if public_league:
-                pl = public_league["name"]
-                pred = _get_prediction(user["id"], m["id"], public_league["id"])
-                if pred:
-                    status_parts.append(f"{pl}: {pred['home_score']}:{pred['away_score']}")
-                else:
-                    status_parts.append(f"{pl}: –")
+                any_pred = _get_prediction(user["id"], m["id"], private_league["id"])
+            if not any_pred and public_league:
+                any_pred = _get_prediction(user["id"], m["id"], public_league["id"])
 
             block_lines.append(match_line)
-            if status_parts:
-                block_lines.append("   " + " | ".join(status_parts))
+            if any_pred:
+                block_lines.append(f"   → {any_pred['home_score']}:{any_pred['away_score']}")
 
         blocks.append("\n".join(block_lines))
 

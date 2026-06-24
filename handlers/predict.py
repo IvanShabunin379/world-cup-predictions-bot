@@ -135,34 +135,40 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
     partner_nom = "Ник" if (user_db_id == vanya_id) else "Ваня"   # именительный: "Ник поставил"
     partner_gen = "Ника" if (user_db_id == vanya_id) else "Вани"  # родительный: "ждём Ника"
 
-    can_predict = []   # (match, note)
+    can_predict = []   # (match, note, private_pred, public_pred)
     waiting = []       # (match, reason)
-    done = []          # (match, score_str)
+    done = []          # (match, private_pred, public_pred)
 
     for m in matches:
         mid = m["id"]
         private_pred = _get_prediction(user_db_id, mid, private_league["id"]) if private_league else None
         public_pred = _get_prediction(user_db_id, mid, public_league["id"]) if public_league else None
 
-        # Determine if fully done
         needs_private = private_league and not private_pred
         needs_public = public_league and not public_pred
         if not needs_private and not needs_public:
-            score = f"{(private_pred or public_pred)['home_score']}:{(private_pred or public_pred)['away_score']}"
-            done.append((m, score))
+            done.append((m, private_pred, public_pred))
             continue
 
         if is_private_member and private_league and needs_private:
-            # No waiting for your turn — you can predict anytime.
             partner_pred = _get_prediction(partner_id, mid, private_league["id"]) if partner_id else None
             note = f"{partner_nom} уже поставил" if partner_pred else ""
-            can_predict.append((m, note))
+            can_predict.append((m, note, private_pred, public_pred))
         else:
-            # Public-only user OR private already done, public still open
-            can_predict.append((m, ""))
+            can_predict.append((m, "", private_pred, public_pred))
+
+    def _league_status(private_pred, public_pred) -> str:
+        parts = []
+        if private_league:
+            s = f"{private_pred['home_score']}:{private_pred['away_score']}" if private_pred else "–"
+            parts.append(f"{private_league['name']}: {s}")
+        if public_league:
+            s = f"{public_pred['home_score']}:{public_pred['away_score']}" if public_pred else "–"
+            parts.append(f"{public_league['name']}: {s}")
+        return " | ".join(parts)
 
     builder = InlineKeyboardBuilder()
-    for m, _ in can_predict:
+    for m, _, _, _ in can_predict:
         btn_text = f"{flag(m['home_team'])} {m['home_team']} – {flag(m['away_team'])} {m['away_team']}"
         builder.button(text=btn_text, callback_data=f"match_{m['id']}")
     builder.adjust(1)
@@ -170,10 +176,11 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
     lines = []
     if can_predict:
         lines.append("Выбери матч для прогноза:")
-        for m, note in can_predict:
+        for m, note, priv, pub in can_predict:
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
             hint = f"  ({note})" if note else ""
             lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}{hint}")
+            lines.append(f"    {_league_status(priv, pub)}")
     else:
         lines.append("Нет матчей, на которые можно поставить прямо сейчас.")
 
@@ -186,9 +193,10 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
     if done:
         lines.append("")
         lines.append("✅ Уже сделано:")
-        for m, score in done:
+        for m, priv, pub in done:
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-            lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)} → {score}")
+            lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}")
+            lines.append(f"    {_league_status(priv, pub)}")
 
     matches_by_id = {m["id"]: m for m in matches}
     kb = builder.as_markup() if can_predict else None

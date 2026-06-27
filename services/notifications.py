@@ -20,6 +20,10 @@ from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
+# Matches for which pre-match reminders and kickoff reveal are suppressed.
+# Result notifications still fire normally.
+_NO_PREMATCH_NOTIF: set[int] = {60, 66}
+
 
 def start_scheduler(bot):
     # 10:00 MSK = 07:00 UTC
@@ -148,7 +152,7 @@ async def _schedule_result_jobs(bot):
         kickoff_seq[m["kickoff_at"]] = seq + 1
         reveal_time = kickoff + timedelta(seconds=seq * 15)
 
-        if reveal_time > now:
+        if reveal_time > now and m["id"] not in _NO_PREMATCH_NOTIF:
             scheduler.add_job(
                 _reveal_public_predictions,
                 trigger=DateTrigger(run_date=reveal_time),
@@ -196,6 +200,7 @@ async def _send_reminders(bot, window_start, window_end, prefix: str):
         .execute()
         .data
     )
+    matches = [m for m in matches if m["id"] not in _NO_PREMATCH_NOTIF]
     if not matches:
         return
 

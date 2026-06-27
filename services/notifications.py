@@ -50,6 +50,53 @@ def start_scheduler(bot):
     scheduler.start()
     asyncio.create_task(_schedule_result_jobs(bot))
     asyncio.create_task(_catch_up_results(bot))
+    # One-off: auto-fill Nik's prediction for Алжир–Австрия (match 59) if he misses it
+    from datetime import datetime
+    kickoff_59 = datetime(2026, 6, 28, 2, 0, tzinfo=timezone.utc)
+    if kickoff_59 > now_utc():
+        scheduler.add_job(
+            _fill_default_prediction,
+            trigger=DateTrigger(run_date=kickoff_59),
+            args=[bot, 59, NIK_TELEGRAM_ID, 1, 1],
+            id="default_pred_59_nik",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+
+async def _fill_default_prediction(bot, match_id: int, telegram_id: int, home_score: int, away_score: int):
+    """At kickoff, insert a default prediction for a user in every league they belong to, if they haven't predicted."""
+    db = get_db()
+    user = db.table("users").select("id, name").eq("telegram_id", telegram_id).execute().data
+    if not user:
+        return
+    user = user[0]
+
+    members = db.table("league_members").select("league_id").eq("user_id", user["id"]).execute().data
+    filled = []
+    for row in members:
+        league_id = row["league_id"]
+        existing = db.table("predictions").select("id").eq("user_id", user["id"]).eq("match_id", match_id).eq("league_id", league_id).execute().data
+        if not existing:
+            db.table("predictions").insert({
+                "user_id": user["id"],
+                "match_id": match_id,
+                "league_id": league_id,
+                "home_score": home_score,
+                "away_score": away_score,
+            }).execute()
+            league = db.table("leagues").select("name").eq("id", league_id).execute().data
+            filled.append((league[0]["name"] if league else str(league_id)))
+
+    if filled:
+        leagues_str = ", ".join(filled)
+        try:
+            await bot.send_message(
+                telegram_id,
+                f"⏰ Матч начался, а прогноза не было — автоматически поставлено {home_score}:{away_score} ({leagues_str}).",
+            )
+        except Exception:
+            pass
 
 
 async def _catch_up_results(bot):

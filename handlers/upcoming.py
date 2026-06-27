@@ -3,28 +3,12 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from database.db import get_db
-from utils.timezone import fmt_msk, fmt_time, utc_to_msk, get_match_window, now_utc, MSK
+from utils.timezone import utc_to_msk, get_match_window, now_utc, MSK
 from utils.flags import fmt_match
-from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 from datetime import timezone, timedelta
 from dateutil import parser as dtparser
 
 router = Router()
-
-
-def _get_user(telegram_id: int) -> dict | None:
-    db = get_db()
-    res = db.table("users").select("*").eq("telegram_id", telegram_id).execute().data
-    return res[0] if res else None
-
-
-def _get_leagues_for_user(user_id: int) -> list[dict]:
-    db = get_db()
-    members = db.table("league_members").select("league_id").eq("user_id", user_id).execute().data
-    league_ids = [m["league_id"] for m in members]
-    if not league_ids:
-        return []
-    return db.table("leagues").select("*").in_("id", league_ids).execute().data
 
 
 def _fetch_window_matches() -> list[dict]:
@@ -64,53 +48,13 @@ def _fetch_window_matches() -> list[dict]:
     return matches
 
 
-def _get_prediction(user_id: int, match_id: int, league_id: int) -> dict | None:
-    db = get_db()
-    res = (
-        db.table("predictions")
-        .select("home_score, away_score")
-        .eq("user_id", user_id)
-        .eq("match_id", match_id)
-        .eq("league_id", league_id)
-        .execute()
-        .data
-    )
-    return res[0] if res else None
-
-
-def _get_assignment(match_id: int) -> int | None:
-    db = get_db()
-    res = db.table("match_assignments").select("first_user_id").eq("match_id", match_id).execute().data
-    return res[0]["first_user_id"] if res else None
-
-
-def _get_vanya_nik_ids() -> tuple[int | None, int | None]:
-    db = get_db()
-    v = db.table("users").select("id").eq("telegram_id", VANYA_TELEGRAM_ID).execute().data
-    n = db.table("users").select("id").eq("telegram_id", NIK_TELEGRAM_ID).execute().data
-    return (v[0]["id"] if v else None), (n[0]["id"] if n else None)
-
-
 @router.message(Command("upcoming"))
 @router.message(F.text == "📅 Ближайшие")
 async def cmd_upcoming(message: Message):
-    user = _get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала зарегистрируйся: /start")
-        return
-
     matches = _fetch_window_matches()
     if not matches:
         await message.answer("Нет предстоящих матчей.")
         return
-
-    leagues = _get_leagues_for_user(user["id"])
-    is_private = message.from_user.id in (VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID)
-    private_league = next((l for l in leagues if l["type"] == "private"), None)
-    public_league = next((l for l in leagues if l["type"] == "public"), None)
-
-    vanya_id, nik_id = _get_vanya_nik_ids() if is_private else (None, None)
-    partner_id = nik_id if (is_private and user["id"] == vanya_id) else vanya_id
 
     # Group matches by MSK date
     from collections import defaultdict
@@ -140,18 +84,7 @@ async def cmd_upcoming(message: Message):
             time_str = utc_to_msk(kickoff).strftime("%H:%M")
             match_line = f"{fmt_match(m['home_team'], m['away_team'])} · {time_str} МСК"
 
-            priv_pred = _get_prediction(user["id"], m["id"], private_league["id"]) if private_league else None
-            pub_pred = _get_prediction(user["id"], m["id"], public_league["id"]) if public_league else None
-
             block_lines.append(match_line)
-            if priv_pred or pub_pred:
-                priv_s = f"{priv_pred['home_score']}:{priv_pred['away_score']}" if priv_pred else None
-                pub_s = f"{pub_pred['home_score']}:{pub_pred['away_score']}" if pub_pred else None
-                if priv_s and pub_s and priv_s != pub_s:
-                    score_str = f"{priv_s} / {pub_s}"
-                else:
-                    score_str = priv_s or pub_s
-                block_lines.append(f"   → {score_str}")
 
         blocks.append("\n".join(block_lines))
 

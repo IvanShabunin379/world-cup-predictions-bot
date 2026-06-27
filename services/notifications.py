@@ -355,7 +355,13 @@ async def _fetch_and_send_results(bot, match_id: int):
         db.table("predictions").update({"points": pts}).eq("id", pred["id"]).execute()
         pred["points"] = pts  # keep in-memory copy in sync for the messages below
 
-    match_str = f"{flag(match['home_team'])} {match['home_team']} {home_score}:{away_score} {match['away_team']} {flag(match['away_team'])}"
+    kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
+    use_spoiler = 0 <= utc_to_msk(kickoff).hour < 8
+
+    score_display = f"{home_score}:{away_score}"
+    if use_spoiler:
+        score_display = f"<tg-spoiler>{score_display}</tg-spoiler>"
+    match_str = f"{flag(match['home_team'])} {match['home_team']} {score_display} {match['away_team']} {flag(match['away_team'])}"
     result_text = f"🏁 Матч завершён!\n\n{match_str}\n\n"
 
     league_members = _get_all_league_members()
@@ -368,9 +374,12 @@ async def _fetch_and_send_results(bot, match_id: int):
             pts = pred.get("points", 0) or 0
             league = db.table("leagues").select("name").eq("id", pred["league_id"]).execute().data
             league_name = league[0]["name"] if league else "Лига"
-            text += f"{league_name}: {pred['home_score']}:{pred['away_score']} → +{pts} оч.\n"
+            pts_display = f"+{pts} оч."
+            if use_spoiler:
+                pts_display = f"<tg-spoiler>{pts_display}</tg-spoiler>"
+            text += f"{league_name}: {pred['home_score']}:{pred['away_score']} → {pts_display}\n"
         try:
-            await bot.send_message(tg_id, text)
+            await bot.send_message(tg_id, text, parse_mode="HTML" if use_spoiler else None)
         except Exception:
             pass
 
@@ -387,18 +396,24 @@ async def _reveal_private_predictions(bot, match, preds, home_score, away_score)
     if len(private_preds) < 2:
         return
 
+    kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
+    use_spoiler = 0 <= utc_to_msk(kickoff).hour < 8
+
     match_str = fmt_match(match["home_team"], match["away_team"])
     lines = [f"🔍 Прогнозы Братья:\n{match_str}\n"]
     for pred in private_preds:
         user = db.table("users").select("name").eq("id", pred["user_id"]).execute().data
         name = user[0]["name"] if user else "?"
         pts = pred.get("points", 0) or 0
-        lines.append(f"{name}: {pred['home_score']}:{pred['away_score']} → +{pts}")
+        line = f"{name}: {pred['home_score']}:{pred['away_score']} → +{pts}"
+        if use_spoiler:
+            line = f"<tg-spoiler>{line}</tg-spoiler>"
+        lines.append(line)
 
     text = "\n".join(lines)
     for tg_id in (VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID):
         try:
-            await bot.send_message(tg_id, text)
+            await bot.send_message(tg_id, text, parse_mode="HTML" if use_spoiler else None)
         except Exception:
             pass
 

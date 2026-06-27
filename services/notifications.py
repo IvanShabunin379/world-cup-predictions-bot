@@ -67,17 +67,19 @@ def start_scheduler(bot):
             misfire_grace_time=300,
         )
     # One-off: if Jordan–Argentina ends 0:2, correct Vanya's prediction before points are calculated
+    # Three attempts at +2h, +2h5m, +2h10m (results fire at +2h15m)
     kickoff_60 = datetime(2026, 6, 28, 2, 0, tzinfo=timezone.utc)
-    correction_time_60 = kickoff_60 + timedelta(hours=2)
-    if correction_time_60 > now_utc():
-        scheduler.add_job(
-            _maybe_correct_vanya_jordan,
-            trigger=DateTrigger(run_date=correction_time_60),
-            args=[bot],
-            id="correct_vanya_jordan_60",
-            replace_existing=True,
-            misfire_grace_time=300,
-        )
+    for offset_minutes, job_suffix in [(0, "a"), (5, "b"), (10, "c")]:
+        t = kickoff_60 + timedelta(hours=2, minutes=offset_minutes)
+        if t > now_utc():
+            scheduler.add_job(
+                _maybe_correct_vanya_jordan,
+                trigger=DateTrigger(run_date=t),
+                args=[bot],
+                id=f"correct_vanya_jordan_60_{job_suffix}",
+                replace_existing=True,
+                misfire_grace_time=300,
+            )
 
 
 async def _fill_default_prediction(bot, match_id: int, telegram_id: int, home_score: int, away_score: int):

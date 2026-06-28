@@ -140,7 +140,7 @@ def fmt_pred_short(pred: dict, home_team: str, away_team: str) -> str:
         return f"{hs}:{as_} доп. вр."
     else:  # NPP1, NPP2
         winner = home_team if ot == "NPP1" else away_team
-        return f"{hs}:{as_}, {winner} по пен."
+        return f"{hs}:{as_}, по пен. {winner}"
 
 
 def fmt_playoff_confirm(match: dict, hs: int, as_: int, outcome: str | None) -> str:

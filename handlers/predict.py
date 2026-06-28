@@ -17,7 +17,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import get_db
 from keyboards.inline import confirm_prediction_kb, league_choice_kb, playoff_outcome_kb
 from utils.timezone import utc_to_msk, fmt_msk, now_utc, get_match_window, MSK
-from utils.flags import fmt_match, flag, fmt_pred_short, fmt_playoff_confirm
+from utils.flags import fmt_match, flag, fmt_pred_short, fmt_playoff_confirm, genitive
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 from datetime import timezone
 from dateutil import parser as dtparser
@@ -309,10 +309,10 @@ async def handle_playoff_outcome(callback: CallbackQuery, state: FSMContext):
 
     if outcome in ("P1", "P2"):
         winner = match["home_team"] if outcome == "P1" else match["away_team"]
-        prompt = f"Введи счёт (победа {winner}, например: 2:1)"
+        prompt = f"Введи счёт (победа {genitive(winner)}, например: 2:1)"
     elif outcome in ("NP1", "NP2"):
         winner = match["home_team"] if outcome == "NP1" else match["away_team"]
-        prompt = f"Введи счёт после доп. времени (победа {winner}, например: 3:1)"
+        prompt = f"Введи счёт после доп. времени (победа {genitive(winner)}, например: 3:1)"
     else:  # NPP1, NPP2
         prompt = "Введи счёт после доп. времени (ничья, например: 1:1)"
 
@@ -339,12 +339,12 @@ async def handle_score_input(message: Message, state: FSMContext):
         if outcome in ("P1", "NP1"):
             if home_score <= away_score:
                 winner = match["home_team"]
-                await message.answer(f"Для этого исхода счёт должен показывать победу {winner} (левое число больше). Попробуй ещё раз:")
+                await message.answer(f"Для этого исхода счёт должен показывать победу {genitive(winner)} (левое число больше). Попробуй ещё раз:")
                 return
         elif outcome in ("P2", "NP2"):
             if home_score >= away_score:
                 winner = match["away_team"]
-                await message.answer(f"Для этого исхода счёт должен показывать победу {winner} (правое число больше). Попробуй ещё раз:")
+                await message.answer(f"Для этого исхода счёт должен показывать победу {genitive(winner)} (правое число больше). Попробуй ещё раз:")
                 return
         elif outcome in ("NPP1", "NPP2"):
             if home_score != away_score:

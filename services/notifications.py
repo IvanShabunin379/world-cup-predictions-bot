@@ -20,10 +20,6 @@ from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
-# Matches for which pre-match reminders and kickoff reveal are suppressed.
-# Result notifications still fire normally.
-_NO_PREMATCH_NOTIF: set[int] = {60, 66}
-
 
 def start_scheduler(bot):
     # 10:00 MSK = 07:00 UTC
@@ -66,20 +62,6 @@ def start_scheduler(bot):
             replace_existing=True,
             misfire_grace_time=300,
         )
-    # One-off: if Jordan–Argentina ends 0:2, correct Vanya's prediction before points are calculated
-    # Three attempts at +2h, +2h5m, +2h10m (results fire at +2h15m)
-    kickoff_60 = datetime(2026, 6, 28, 2, 0, tzinfo=timezone.utc)
-    for offset_minutes, job_suffix in [(0, "a"), (5, "b"), (10, "c")]:
-        t = kickoff_60 + timedelta(hours=2, minutes=offset_minutes)
-        if t > now_utc():
-            scheduler.add_job(
-                _maybe_correct_vanya_jordan,
-                trigger=DateTrigger(run_date=t),
-                args=[bot],
-                id=f"correct_vanya_jordan_60_{job_suffix}",
-                replace_existing=True,
-                misfire_grace_time=300,
-            )
 
 
 async def _fill_default_prediction(bot, match_id: int, telegram_id: int, home_score: int, away_score: int):
@@ -116,31 +98,6 @@ async def _fill_default_prediction(bot, match_id: int, telegram_id: int, home_sc
         except Exception:
             pass
 
-
-async def _maybe_correct_vanya_jordan(bot):
-    """15 min before results: if Jordan–Argentina ended 0:2, fix Vanya's prediction in both leagues."""
-    from services.espn import fetch_match_result
-    db = get_db()
-
-    match = db.table("matches").select("*").eq("id", 60).execute().data
-    if not match:
-        return
-    match = match[0]
-
-    try:
-        result = await fetch_match_result(match["kickoff_at"], match["home_team"], match["away_team"])
-    except Exception:
-        return
-
-    if not result or not result.get("completed") or result["home_score"] != 0 or result["away_score"] != 2:
-        return
-
-    vanya = db.table("users").select("id").eq("telegram_id", VANYA_TELEGRAM_ID).execute().data
-    if not vanya:
-        return
-    vanya_id = vanya[0]["id"]
-
-    db.table("predictions").update({"home_score": 0, "away_score": 2}).eq("user_id", vanya_id).eq("match_id", 60).execute()
 
 
 async def _catch_up_results(bot):
@@ -192,7 +149,7 @@ async def _schedule_result_jobs(bot):
         kickoff_seq[m["kickoff_at"]] = seq + 1
         reveal_time = kickoff + timedelta(seconds=seq * 15)
 
-        if reveal_time > now and m["id"] not in _NO_PREMATCH_NOTIF:
+        if reveal_time > now:
             scheduler.add_job(
                 _reveal_public_predictions,
                 trigger=DateTrigger(run_date=reveal_time),
@@ -240,7 +197,6 @@ async def _send_reminders(bot, window_start, window_end, prefix: str):
         .execute()
         .data
     )
-    matches = [m for m in matches if m["id"] not in _NO_PREMATCH_NOTIF]
     if not matches:
         return
 

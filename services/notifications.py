@@ -14,7 +14,7 @@ from apscheduler.triggers.date import DateTrigger
 
 from database.db import get_db
 from utils.timezone import fmt_msk, now_utc, utc_to_msk
-from utils.flags import fmt_match, flag
+from utils.flags import fmt_match, flag, fmt_pred_short
 from services.scoring import score_group, score_playoff
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 
@@ -249,7 +249,8 @@ async def _reveal_public_predictions(bot, match_id: int):
         lines = [f"🏁 Матч начался! {match_str}\n", "Прогнозы футбольных аналитиков Весенних Зорь:"]
         for p in sorted(preds, key=lambda x: x.get("created_at", "")):
             name = (p.get("users") or {}).get("name") or "?"
-            lines.append(f"  {name}: {p['home_score']}:{p['away_score']}")
+            pred_str = fmt_pred_short(p, match["home_team"], match["away_team"])
+            lines.append(f"  {name}: {pred_str}")
         text = "\n".join(lines)
     else:
         text = f"🏁 Матч начался! {match_str}"
@@ -262,6 +263,24 @@ async def _reveal_public_predictions(bot, match_id: int):
             await bot.send_message(u["telegram_id"], text)
         except Exception:
             pass
+
+
+def _fmt_result_header(match: dict, home_score: int, away_score: int, outcome_type: str | None, use_spoiler: bool) -> str:
+    h, a = match["home_team"], match["away_team"]
+    fh, fa = flag(h), flag(a)
+    score_s = f"{home_score}:{away_score}"
+    if use_spoiler:
+        score_s = f"<tg-spoiler>{score_s}</tg-spoiler>"
+    if not outcome_type or outcome_type in ("P1", "P2"):
+        return f"{fh} {h} {score_s} {fa} {a}"
+    elif outcome_type in ("NP1", "NP2"):
+        return f"{fh} {h} {score_s} (доп. вр.) {fa} {a}"
+    else:  # NPP1, NPP2
+        winner = h if outcome_type == "NPP1" else a
+        extra = f"(по пен. {winner})"
+        if use_spoiler:
+            extra = f"<tg-spoiler>{extra}</tg-spoiler>"
+        return f"{fh} {h} {score_s} {fa} {a}\n{extra}"
 
 
 async def _fetch_and_send_results(bot, match_id: int):
@@ -291,13 +310,25 @@ async def _fetch_and_send_results(bot, match_id: int):
         )
         return
 
+    from services.espn import determine_playoff_outcome
+
     home_score = result["home_score"]
     away_score = result["away_score"]
-    db.table("matches").update({
-        "home_score": home_score,
-        "away_score": away_score,
-        "status": "finished",
-    }).eq("id", match_id).execute()
+
+    outcome_type = None
+    if match["stage"] == "playoff":
+        outcome_type = determine_playoff_outcome(
+            result.get("status_name", ""),
+            result.get("short_detail", ""),
+            home_score, away_score,
+            result.get("home_winner", home_score > away_score),
+        )
+
+    match_update = {"home_score": home_score, "away_score": away_score, "status": "finished"}
+    if outcome_type:
+        match_update["outcome"] = outcome_type
+    db.table("matches").update(match_update).eq("id", match_id).execute()
+    match["outcome"] = outcome_type  # keep in-memory copy in sync
 
     preds = db.table("predictions").select("*").eq("match_id", match_id).execute().data
     for pred in preds:
@@ -305,19 +336,16 @@ async def _fetch_and_send_results(bot, match_id: int):
             pts = score_group(pred["home_score"], pred["away_score"], home_score, away_score)
         else:
             pts = score_playoff(
-                pred["home_score"], pred["away_score"], pred["outcome_type"],
-                home_score, away_score, match["outcome"],
+                pred["home_score"], pred["away_score"], pred.get("outcome_type") or "P1",
+                home_score, away_score, outcome_type or "P1",
             )
         db.table("predictions").update({"points": pts}).eq("id", pred["id"]).execute()
-        pred["points"] = pts  # keep in-memory copy in sync for the messages below
+        pred["points"] = pts
 
     kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
     use_spoiler = 0 <= utc_to_msk(kickoff).hour < 8
 
-    score_display = f"{home_score}:{away_score}"
-    if use_spoiler:
-        score_display = f"<tg-spoiler>{score_display}</tg-spoiler>"
-    match_str = f"{flag(match['home_team'])} {match['home_team']} {score_display} {match['away_team']} {flag(match['away_team'])}"
+    match_str = _fmt_result_header(match, home_score, away_score, outcome_type, use_spoiler)
     result_text = f"🏁 Матч завершён!\n\n{match_str}\n\n"
 
     league_members = _get_all_league_members()
@@ -330,10 +358,11 @@ async def _fetch_and_send_results(bot, match_id: int):
             pts = pred.get("points", 0) or 0
             league = db.table("leagues").select("name").eq("id", pred["league_id"]).execute().data
             league_name = league[0]["name"] if league else "Лига"
+            pred_str = fmt_pred_short(pred, match["home_team"], match["away_team"])
             pts_display = f"+{pts} оч."
             if use_spoiler:
                 pts_display = f"<tg-spoiler>{pts_display}</tg-spoiler>"
-            text += f"{league_name}: {pred['home_score']}:{pred['away_score']} → {pts_display}\n"
+            text += f"{league_name}: {pred_str} → {pts_display}\n"
         try:
             await bot.send_message(tg_id, text, parse_mode="HTML" if use_spoiler else None)
         except Exception:
@@ -361,7 +390,8 @@ async def _reveal_private_predictions(bot, match, preds, home_score, away_score)
         user = db.table("users").select("name").eq("id", pred["user_id"]).execute().data
         name = user[0]["name"] if user else "?"
         pts = pred.get("points", 0) or 0
-        line = f"{name}: {pred['home_score']}:{pred['away_score']} → +{pts}"
+        pred_str = fmt_pred_short(pred, match["home_team"], match["away_team"])
+        line = f"{name}: {pred_str} → +{pts}"
         if use_spoiler:
             line = f"<tg-spoiler>{line}</tg-spoiler>"
         lines.append(line)

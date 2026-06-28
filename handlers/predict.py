@@ -3,6 +3,8 @@
 
 Private league rule: sequential predictions (first_user_id from match_assignments).
 Public league: always open, no ordering.
+
+Playoff flow: outcome selection first → score entry second (with validation).
 """
 import re
 from aiogram import Router, F
@@ -15,7 +17,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import get_db
 from keyboards.inline import confirm_prediction_kb, league_choice_kb, playoff_outcome_kb
 from utils.timezone import utc_to_msk, fmt_msk, now_utc, get_match_window, MSK
-from utils.flags import fmt_match, flag
+from utils.flags import fmt_match, flag, fmt_pred_short, fmt_playoff_confirm
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 from datetime import timezone
 from dateutil import parser as dtparser
@@ -25,8 +27,8 @@ router = Router()
 
 class PredictStates(StatesGroup):
     choosing_match = State()
-    entering_score = State()
-    choosing_outcome = State()
+    choosing_outcome = State()   # playoff only: pick outcome FIRST
+    entering_score = State()     # then enter score (validated by outcome)
     choosing_league = State()
     confirming = State()
 
@@ -132,12 +134,10 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
 
     vanya_id, nik_id = _get_vanya_nik_ids() if is_private_member else (None, None)
     partner_id = nik_id if (user_db_id == vanya_id) else vanya_id
-    partner_nom = "Ник" if (user_db_id == vanya_id) else "Ваня"   # именительный: "Ник поставил"
-    partner_gen = "Ника" if (user_db_id == vanya_id) else "Вани"  # родительный: "ждём Ника"
+    partner_nom = "Ник" if (user_db_id == vanya_id) else "Ваня"
 
-    can_predict = []   # (match, note, private_pred, public_pred)
-    waiting = []       # (match, reason)
-    done = []          # (match, private_pred, public_pred)
+    can_predict = []
+    done = []
 
     for m in matches:
         mid = m["id"]
@@ -157,14 +157,17 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
         else:
             can_predict.append((m, "", private_pred, public_pred))
 
-    def _league_status(private_pred, public_pred) -> str:
+    def _pred_str(pred, m) -> str:
+        if not pred:
+            return "–"
+        return fmt_pred_short(pred, m["home_team"], m["away_team"])
+
+    def _league_status(private_pred, public_pred, m) -> str:
         parts = []
         if private_league:
-            s = f"{private_pred['home_score']}:{private_pred['away_score']}" if private_pred else "–"
-            parts.append(f"{private_league['name']}: {s}")
+            parts.append(f"{private_league['name']}: {_pred_str(private_pred, m)}")
         if public_league:
-            s = f"{public_pred['home_score']}:{public_pred['away_score']}" if public_pred else "–"
-            parts.append(f"{public_league['name']}: {s}")
+            parts.append(f"{public_league['name']}: {_pred_str(public_pred, m)}")
         return " | ".join(parts)
 
     builder = InlineKeyboardBuilder()
@@ -180,15 +183,9 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
             hint = f"  ({note})" if note else ""
             lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}{hint}")
-            lines.append(f"    {_league_status(priv, pub)}")
+            lines.append(f"    {_league_status(priv, pub, m)}")
     else:
         lines.append("Нет матчей, на которые можно поставить прямо сейчас.")
-
-    if waiting:
-        lines.append("")
-        for m, reason in waiting:
-            kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
-            lines.append(f"{reason}: {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}")
 
     if done:
         lines.append("")
@@ -196,7 +193,7 @@ def _build_match_list(matches: list[dict], user_db_id: int, leagues: list[dict],
         for m, priv, pub in done:
             kickoff = dtparser.parse(m["kickoff_at"]).replace(tzinfo=timezone.utc)
             lines.append(f"  {fmt_match(m['home_team'], m['away_team'])} · {fmt_msk(kickoff)}")
-            lines.append(f"    {_league_status(priv, pub)}")
+            lines.append(f"    {_league_status(priv, pub, m)}")
 
     matches_by_id = {m["id"]: m for m in matches}
     kb = builder.as_markup() if can_predict else None
@@ -228,7 +225,6 @@ async def handle_predict_shortcut(callback: CallbackQuery, state: FSMContext):
         return
     match = match_data[0]
 
-    # Check kickoff hasn't passed
     kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
     if now_utc() >= kickoff:
         await callback.message.answer("Приём прогнозов на этот матч уже закрыт.")
@@ -240,12 +236,7 @@ async def handle_predict_shortcut(callback: CallbackQuery, state: FSMContext):
         matches_by_id[match_id] = match
 
     await state.update_data(matches_by_id=matches_by_id, match=match, user_id=user["id"], leagues=leagues)
-    await state.set_state(PredictStates.entering_score)
-    await callback.message.answer(
-        f"{fmt_match(match['home_team'], match['away_team'])}\n"
-        f"{fmt_msk(kickoff)}\n\n"
-        "Введи счёт (например: 2:1)"
-    )
+    await _ask_outcome_or_score(callback.message, state, match, kickoff)
 
 
 @router.message(Command("predict"))
@@ -288,14 +279,45 @@ async def handle_match_button(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.update_data(match=match)
-    await state.set_state(PredictStates.entering_score)
     kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
     await callback.answer()
-    await callback.message.answer(
-        f"{fmt_match(match['home_team'], match['away_team'])}\n"
-        f"{fmt_msk(kickoff)}\n\n"
-        "Введи счёт (например: 2:1)"
-    )
+    await _ask_outcome_or_score(callback.message, state, match, kickoff)
+
+
+async def _ask_outcome_or_score(message: Message, state: FSMContext, match: dict, kickoff):
+    """For playoff: show 6-outcome keyboard. For group: ask for score directly."""
+    header = f"{fmt_match(match['home_team'], match['away_team'])}\n{fmt_msk(kickoff)}\n\n"
+    if match["stage"] == "playoff":
+        await state.set_state(PredictStates.choosing_outcome)
+        await message.answer(
+            header + "Выбери исход матча:",
+            reply_markup=playoff_outcome_kb(match["home_team"], match["away_team"]),
+        )
+    else:
+        await state.set_state(PredictStates.entering_score)
+        await message.answer(header + "Введи счёт (например: 2:1)")
+
+
+@router.callback_query(PredictStates.choosing_outcome, F.data.startswith("po_"))
+async def handle_playoff_outcome(callback: CallbackQuery, state: FSMContext):
+    outcome = callback.data[3:]  # P1, P2, NP1, NP2, NPP1, NPP2
+    await state.update_data(outcome_type=outcome)
+    await callback.answer()
+
+    data = await state.get_data()
+    match = data["match"]
+
+    if outcome in ("P1", "P2"):
+        winner = match["home_team"] if outcome == "P1" else match["away_team"]
+        prompt = f"Введи счёт (победа {winner}, например: 2:1)"
+    elif outcome in ("NP1", "NP2"):
+        winner = match["home_team"] if outcome == "NP1" else match["away_team"]
+        prompt = f"Введи счёт после доп. времени (победа {winner}, например: 3:1)"
+    else:  # NPP1, NPP2
+        prompt = "Введи счёт после доп. времени (ничья, например: 1:1)"
+
+    await state.set_state(PredictStates.entering_score)
+    await callback.message.answer(prompt)
 
 
 @router.message(PredictStates.entering_score)
@@ -310,30 +332,27 @@ async def handle_score_input(message: Message, state: FSMContext):
     away_score = int(m.group(2))
     data = await state.get_data()
     match = data["match"]
+    outcome = data.get("outcome_type")
+
+    # Validate score against the chosen playoff outcome
+    if match["stage"] == "playoff" and outcome:
+        if outcome in ("P1", "NP1"):
+            if home_score <= away_score:
+                winner = match["home_team"]
+                await message.answer(f"Для этого исхода счёт должен показывать победу {winner} (левое число больше). Попробуй ещё раз:")
+                return
+        elif outcome in ("P2", "NP2"):
+            if home_score >= away_score:
+                winner = match["away_team"]
+                await message.answer(f"Для этого исхода счёт должен показывать победу {winner} (правое число больше). Попробуй ещё раз:")
+                return
+        elif outcome in ("NPP1", "NPP2"):
+            if home_score != away_score:
+                await message.answer("Для пенальти счёт после доп. времени должен быть ничейным (например, 1:1). Попробуй ещё раз:")
+                return
 
     await state.update_data(home_score=home_score, away_score=away_score)
-
-    if match["stage"] == "group":
-        await _proceed_to_league_or_confirm(message, state)
-    else:
-        if home_score != away_score:
-            outcome = "P1" if home_score > away_score else "P2"
-            await state.update_data(outcome_type=outcome)
-            await _proceed_to_league_or_confirm(message, state)
-        else:
-            await state.set_state(PredictStates.choosing_outcome)
-            await message.answer(
-                f"Ничья {home_score}:{away_score} — выбери исход:",
-                reply_markup=playoff_outcome_kb(match["home_team"], match["away_team"]),
-            )
-
-
-@router.callback_query(PredictStates.choosing_outcome, F.data.startswith("po_"))
-async def handle_playoff_outcome(callback: CallbackQuery, state: FSMContext):
-    outcome = callback.data[3:]
-    await state.update_data(outcome_type=outcome)
-    await callback.answer()
-    await _proceed_to_league_or_confirm(callback.message, state)
+    await _proceed_to_league_or_confirm(message, state)
 
 
 async def _proceed_to_league_or_confirm(message: Message, state: FSMContext):
@@ -346,13 +365,13 @@ async def _proceed_to_league_or_confirm(message: Message, state: FSMContext):
     has_public = any(l["type"] == "public" for l in leagues)
 
     if is_private_member and has_private and has_public:
-        # No waiting — private is always available; let the user pick the league(s).
         match = data["match"]
-        await state.set_state(PredictStates.choosing_league)
         hs, as_ = data["home_score"], data["away_score"]
-        score_str = f"{flag(match['home_team'])} {match['home_team']} {hs}:{as_} {match['away_team']} {flag(match['away_team'])}"
+        outcome = data.get("outcome_type")
+        confirm_line = fmt_playoff_confirm(match, hs, as_, outcome)
+        await state.set_state(PredictStates.choosing_league)
         await message.answer(
-            f"{score_str}\nПрименить к:",
+            f"{confirm_line}\nПрименить к:",
             reply_markup=league_choice_kb(),
         )
     else:
@@ -386,11 +405,7 @@ async def _show_confirm(message: Message, state: FSMContext):
     as_ = data["away_score"]
     outcome = data.get("outcome_type")
 
-    score_str = f"{flag(match['home_team'])} {match['home_team']} {hs}:{as_} {match['away_team']} {flag(match['away_team'])}"
-    if outcome and outcome not in ("P1", "P2"):
-        labels = {"NP1": "доп. вр.", "NP2": "доп. вр.", "NPP1": "пенальти", "NPP2": "пенальти"}
-        winner = match["home_team"] if outcome in ("NP1", "NPP1") else match["away_team"]
-        score_str += f" → {labels[outcome]} → {winner}"
+    score_str = fmt_playoff_confirm(match, hs, as_, outcome)
 
     leagues = data["leagues"]
     selected = data.get("selected_leagues", [])
@@ -421,8 +436,6 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
         if _get_prediction(user_id, match["id"], league_id):
             continue
 
-        # Private league: no waiting. Only block if the SAME score is already taken
-        # by the brother — then the later predictor must change.
         league = next((l for l in data["leagues"] if l["id"] == league_id), None)
         if league and league["type"] == "private":
             vanya_id, nik_id = _get_vanya_nik_ids()
@@ -430,7 +443,6 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
             partner_pred = _get_prediction(partner_id, match["id"], league_id) if partner_id else None
 
             if partner_pred and partner_pred["home_score"] == hs and partner_pred["away_score"] == as_:
-                # Score collision — priority by stratification, not prediction time
                 assignment_first_id = _get_assignment(match["id"])
                 i_am_first = (assignment_first_id == user_id) if assignment_first_id else True
                 my_name = "Ваня" if user_id == vanya_id else "Ник"
@@ -439,7 +451,6 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                 match_str = fmt_match(match["home_team"], match["away_team"])
 
                 if not i_am_first:
-                    # I am second by assignment — must choose a different score
                     await callback.answer(
                         f"🚫 {partner_name} уже поставил {hs}:{as_} — выбери другой счёт!",
                         show_alert=True,
@@ -463,7 +474,6 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                     await callback.message.answer("Введи другой счёт:")
                     return
                 else:
-                    # I am first by assignment — partner (second) must give way
                     try:
                         db.table("predictions").delete() \
                             .eq("user_id", partner_id) \
@@ -489,7 +499,6 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
                         )
                     except Exception:
                         pass
-                    # Fall through to save current user's prediction
 
         db.table("predictions").insert({
             "user_id": user_id,
@@ -512,7 +521,6 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
 
 
 async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_league_ids: list):
-    from utils.flags import fmt_match as _fmt_match
     user_id = data["user_id"]
     match = data["match"]
 
@@ -527,12 +535,11 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
 
         partner_id = nik_id if user_id == vanya_id else vanya_id
         partner_pred = _get_prediction(partner_id, match["id"], league_id)
-        match_str = _fmt_match(match["home_team"], match["away_team"])
+        match_str = fmt_match(match["home_team"], match["away_team"])
         my_name = "Ваня" if user_id == vanya_id else "Ник"
         partner_tg = NIK_TELEGRAM_ID if user_id == vanya_id else VANYA_TELEGRAM_ID
 
         if not partner_pred:
-            # Брат ещё не ставил — я первый, уведомляем его
             try:
                 await callback.bot.send_message(
                     partner_tg,
@@ -541,12 +548,11 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
             except Exception:
                 pass
         else:
-            # Оба поставили — раскрываем оба прогноза обоим, первый предиктор идёт первым
             first_uid = _get_assignment(match["id"])
             vanya_pred = _get_prediction(vanya_id, match["id"], league_id)
             nik_pred = _get_prediction(nik_id, match["id"], league_id)
-            vanya_score = f"{vanya_pred['home_score']}:{vanya_pred['away_score']}" if vanya_pred else "–"
-            nik_score = f"{nik_pred['home_score']}:{nik_pred['away_score']}" if nik_pred else "–"
+            vanya_score = fmt_pred_short(vanya_pred, match["home_team"], match["away_team"]) if vanya_pred else "–"
+            nik_score = fmt_pred_short(nik_pred, match["home_team"], match["away_team"]) if nik_pred else "–"
 
             if first_uid == vanya_id:
                 scores_lines = f"Ваня: {vanya_score}\nНик: {nik_score}"
@@ -568,5 +574,14 @@ async def _notify_partner_if_first(callback: CallbackQuery, data: dict, saved_le
 @router.callback_query(PredictStates.confirming, F.data == "pred_cancel")
 async def handle_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await state.set_state(PredictStates.entering_score)
-    await callback.message.answer("Введи счёт заново (например: 2:1):")
+    data = await state.get_data()
+    match = data.get("match", {})
+    if match.get("stage") == "playoff":
+        await state.set_state(PredictStates.choosing_outcome)
+        await callback.message.answer(
+            "Выбери исход матча заново:",
+            reply_markup=playoff_outcome_kb(match["home_team"], match["away_team"]),
+        )
+    else:
+        await state.set_state(PredictStates.entering_score)
+        await callback.message.answer("Введи счёт заново (например: 2:1):")

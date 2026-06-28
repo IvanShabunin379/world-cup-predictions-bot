@@ -72,3 +72,29 @@ def fmt_team(team: str) -> str:
 
 def fmt_match(home: str, away: str) -> str:
     return f"{flag(home)} {home} – {flag(away)} {away}"
+
+
+def fmt_pred_short(pred: dict, home_team: str, away_team: str) -> str:
+    """Short prediction label: '4:2 доп. вр.' / '1:1, Аргентина по пен.' / '2:1'"""
+    hs, as_ = pred["home_score"], pred["away_score"]
+    ot = pred.get("outcome_type")
+    if not ot or ot in ("P1", "P2"):
+        return f"{hs}:{as_}"
+    elif ot in ("NP1", "NP2"):
+        return f"{hs}:{as_} доп. вр."
+    else:  # NPP1, NPP2
+        winner = home_team if ot == "NPP1" else away_team
+        return f"{hs}:{as_}, {winner} по пен."
+
+
+def fmt_playoff_confirm(match: dict, hs: int, as_: int, outcome: str | None) -> str:
+    """Full confirmation line: '🇦🇷 Аргентина 4:2 (доп. вр.) 🇫🇷 Франция'"""
+    h, a = match["home_team"], match["away_team"]
+    fh, fa = flag(h), flag(a)
+    if not outcome or outcome in ("P1", "P2"):
+        return f"{fh} {h} {hs}:{as_} {fa} {a}"
+    elif outcome in ("NP1", "NP2"):
+        return f"{fh} {h} {hs}:{as_} (доп. вр.) {fa} {a}"
+    else:  # NPP1, NPP2
+        winner = h if outcome == "NPP1" else a
+        return f"{fh} {h} {hs}:{as_} {fa} {a}\n(по пен. {winner})"

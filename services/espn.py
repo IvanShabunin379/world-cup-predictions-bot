@@ -85,11 +85,13 @@ async def _fetch_date(session: aiohttp.ClientSession, date_str: str) -> list[dic
             status = comp["status"]["type"]
             home = away = None
             home_score = away_score = None
+            home_winner = False
             for c in comp["competitors"]:
                 ru = _en_to_ru(c["team"]["displayName"])
                 score = int(c["score"]) if c.get("score") not in (None, "") else None
+                winner = bool(c.get("winner"))
                 if c["homeAway"] == "home":
-                    home, home_score = ru, score
+                    home, home_score, home_winner = ru, score, winner
                 else:
                     away, away_score = ru, score
             results.append({
@@ -97,12 +99,35 @@ async def _fetch_date(session: aiohttp.ClientSession, date_str: str) -> list[dic
                 "away_team": away,
                 "home_score": home_score,
                 "away_score": away_score,
+                "home_winner": home_winner,
                 "completed": bool(status.get("completed")),
                 "status_name": status.get("name", ""),
+                "short_detail": status.get("shortDetail", ""),
             })
         except (KeyError, IndexError, TypeError, ValueError):
             continue
     return results
+
+
+def determine_playoff_outcome(
+    status_name: str, short_detail: str,
+    home_score: int, away_score: int, home_winner: bool,
+) -> str | None:
+    """
+    Infer playoff outcome type from ESPN status fields.
+    Returns 'P1'|'P2'|'NP1'|'NP2'|'NPP1'|'NPP2' or None if undetermined.
+    """
+    name = status_name.upper()
+    detail = short_detail.upper()
+    if "PEN" in name or "AP" == detail or "PENS" in detail or "PEN" in detail:
+        return "NPP1" if home_winner else "NPP2"
+    if "AET" in name or "AET" in detail:
+        return "NP1" if home_winner else "NP2"
+    if home_score > away_score:
+        return "P1"
+    if home_score < away_score:
+        return "P2"
+    return None
 
 
 async def fetch_match_result(kickoff_iso: str, home_team_ru: str, away_team_ru: str) -> dict | None:
@@ -130,7 +155,9 @@ async def fetch_match_result(kickoff_iso: str, home_team_ru: str, away_team_ru: 
                     return {
                         "home_score": ev["away_score"],
                         "away_score": ev["home_score"],
+                        "home_winner": not ev["home_winner"],
                         "completed": ev["completed"],
                         "status_name": ev["status_name"],
+                        "short_detail": ev["short_detail"],
                     }
     return None

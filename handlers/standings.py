@@ -73,10 +73,10 @@ def _build_standings(league_id: int) -> str:
                 outcomes += 1
         stats[uid] = {"total": total, "exact": exact, "outcomes": outcomes}
 
-    # Sort by points desc, then exact scores, then outcomes as tiebreaks
+    # Sort by points desc, then by exact scores desc as tiebreak
     ranked = sorted(
         stats.items(),
-        key=lambda kv: (kv[1]["total"], kv[1]["exact"], kv[1]["outcomes"]),
+        key=lambda kv: (kv[1]["total"], kv[1]["exact"]),
         reverse=True,
     )
 
@@ -94,8 +94,8 @@ def _build_standings(league_id: int) -> str:
     prev_key = None
     rank = 0
     for i, (uid, s) in enumerate(ranked, 1):
-        key = (s["total"], s["exact"], s["outcomes"])
-        if key != prev_key:           # ties (same points, exact AND outcomes) share a place
+        key = (s["total"], s["exact"])
+        if key != prev_key:           # ties (same points AND exact) share a place
             rank = i
             prev_key = key
         u = user_map.get(uid, {})

@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 
 from database.db import get_db
 from keyboards.inline import standings_league_kb
+from services.scoring import playoff_winner_guessed
 from utils.text import plural_points as _plural_points
 from utils.timezone import fmt_msk, now_utc
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
@@ -41,7 +42,8 @@ def _build_standings(league_id: int) -> str:
     for uid in user_ids:
         preds = (
             db.table("predictions")
-            .select("home_score, away_score, points, matches(home_score, away_score, status)")
+            .select("home_score, away_score, outcome_type, points, "
+                    "matches(home_score, away_score, status, stage, outcome)")
             .eq("user_id", uid)
             .eq("league_id", league_id)
             .execute()
@@ -54,10 +56,20 @@ def _build_standings(league_id: int) -> str:
             m = p.get("matches") or {}
             if m.get("status") != "finished":
                 continue
-            total += p["points"] or 0
-            if p["home_score"] == m["home_score"] and p["away_score"] == m["away_score"]:
+            pts = p["points"] or 0
+            total += pts
+            is_playoff = m.get("stage") == "playoff"
+            # ТС: группа = 3 очка, плей-офф = только максимум (4 очка)
+            if pts == (4 if is_playoff else 3):
                 exact += 1
-            elif (p["points"] or 0) > 0:
+            elif is_playoff:
+                # Исход в плей-офф = угадан проходящий дальше победитель
+                actual_oc = m.get("outcome") or (
+                    "P1" if (m["home_score"] or 0) > (m["away_score"] or 0) else "P2"
+                )
+                if playoff_winner_guessed(p.get("outcome_type") or "P1", actual_oc):
+                    outcomes += 1
+            elif pts > 0:
                 outcomes += 1
         stats[uid] = {"total": total, "exact": exact, "outcomes": outcomes}
 

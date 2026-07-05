@@ -7,7 +7,8 @@ from database.db import get_db
 from keyboards.inline import history_league_kb
 from utils.timezone import fmt_date_msk
 from utils.text import plural_points
-from utils.flags import flag
+from utils.flags import flag, fmt_pred_short
+from services.scoring import playoff_winner_guessed
 from datetime import timezone
 from dateutil import parser as dtparser
 
@@ -31,12 +32,16 @@ def _get_leagues_for_user(user_id: int) -> list[dict]:
     return db.table("leagues").select("*").in_("id", league_ids).execute().data
 
 
-def _pts_label(pred_h, pred_a, actual_h, actual_a, pts) -> str:
+def _pts_label(pts, is_playoff: bool, winner_ok: bool) -> str:
+    # ✅🎯 = максимум (группа 3, плей-офф 4); ✅ = угадан победитель/исход;
+    # 🟡 = очки есть, но победитель не угадан (только плей-офф); ❌ = 0
     pts = pts or 0
-    if pred_h == actual_h and pred_a == actual_a:
+    if pts == (4 if is_playoff else 3):
         emoji = "✅🎯"
-    elif pts > 0:
+    elif winner_ok if is_playoff else pts > 0:
         emoji = "✅"
+    elif pts > 0:
+        emoji = "🟡"
     else:
         emoji = "❌"
     return f"{emoji} {pts} {plural_points(pts)}"
@@ -48,8 +53,8 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
 
     preds = (
         db.table("predictions")
-        .select("home_score, away_score, points, user_id, match_id, "
-                "matches(home_team, away_team, home_score, away_score, kickoff_at, status), "
+        .select("home_score, away_score, outcome_type, points, user_id, match_id, "
+                "matches(home_team, away_team, home_score, away_score, outcome, stage, kickoff_at, status), "
                 "users(name)")
         .eq("league_id", league_id)
         .execute()
@@ -103,9 +108,16 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
     blocks = []
     for mid, data in ordered:
         m = data["match"]
+        score_s = f"{m['home_score']}:{m['away_score']}"
+        oc = m.get("outcome")
+        if oc in ("NP1", "NP2"):
+            score_s += " (доп. вр.)"
+        elif oc in ("NPP1", "NPP2"):
+            winner = m["home_team"] if oc == "NPP1" else m["away_team"]
+            score_s += f" (по пен. {winner})"
         head = (
             f"{flag(m['home_team'])} {m['home_team']} "
-            f"{m['home_score']}:{m['away_score']} "
+            f"{score_s} "
             f"{m['away_team']} {flag(m['away_team'])} · {fmt_date_msk(dtparser.parse(m['kickoff_at']).replace(tzinfo=timezone.utc))}"
         )
         lines = [head]
@@ -134,11 +146,17 @@ def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:
             return (0 if is_first else 1, -(p["points"] or 0))
 
         lines.append("")
+        is_playoff = m.get("stage") == "playoff"
+        actual_oc = m.get("outcome") or (
+            "P1" if (m["home_score"] or 0) > (m["away_score"] or 0) else "P2"
+        )
         for p in sorted(data["preds"], key=sort_key):
             name = (p.get("users") or {}).get("name") or "?"
             tag = " (1-й)" if (is_private and p["user_id"] == first_uid) else ""
-            label = _pts_label(p["home_score"], p["away_score"], m["home_score"], m["away_score"], p["points"])
-            lines.append(f"{name}{tag}: {p['home_score']}:{p['away_score']} → {label}")
+            winner_ok = playoff_winner_guessed(p.get("outcome_type") or "P1", actual_oc)
+            label = _pts_label(p["points"], is_playoff, winner_ok)
+            pred_s = fmt_pred_short(p, m["home_team"], m["away_team"])
+            lines.append(f"{name}{tag}: {pred_s} → {label}")
 
         blocks.append("\n".join(lines))
 

@@ -442,7 +442,10 @@ async def handle_confirm(callback: CallbackQuery, state: FSMContext):
             partner_id = nik_id if user_id == vanya_id else vanya_id
             partner_pred = _get_prediction(partner_id, match["id"], league_id) if partner_id else None
 
-            if partner_pred and partner_pred["home_score"] == hs and partner_pred["away_score"] == as_:
+            if (partner_pred
+                    and partner_pred["home_score"] == hs
+                    and partner_pred["away_score"] == as_
+                    and partner_pred.get("outcome_type") == outcome):
                 assignment_first_id = _get_assignment(match["id"])
                 i_am_first = (assignment_first_id == user_id) if assignment_first_id else True
                 my_name = "Ваня" if user_id == vanya_id else "Ник"

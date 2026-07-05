@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from database.db import get_db
 from keyboards.inline import history_league_kb
 from utils.timezone import fmt_date_msk
-from utils.text import plural_points
+from utils.text import pred_result_label
 from utils.flags import flag, fmt_pred_short
 from services.scoring import playoff_winner_guessed
 from datetime import timezone
@@ -32,19 +32,7 @@ def _get_leagues_for_user(user_id: int) -> list[dict]:
     return db.table("leagues").select("*").in_("id", league_ids).execute().data
 
 
-def _pts_label(pts, is_playoff: bool, winner_ok: bool) -> str:
-    # ✅🎯 = максимум (группа 3, плей-офф 4); ✅ = угадан победитель/исход;
-    # 🟡 = очки есть, но победитель не угадан (только плей-офф); ❌ = 0
-    pts = pts or 0
-    if pts == (4 if is_playoff else 3):
-        emoji = "✅🎯"
-    elif winner_ok if is_playoff else pts > 0:
-        emoji = "✅"
-    elif pts > 0:
-        emoji = "🟡"
-    else:
-        emoji = "❌"
-    return f"{emoji} {pts} {plural_points(pts)}"
+_pts_label = pred_result_label
 
 
 def _build_history_blocks(league_id: int, is_private: bool) -> list[str]:

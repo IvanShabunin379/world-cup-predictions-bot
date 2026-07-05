@@ -15,7 +15,8 @@ from apscheduler.triggers.date import DateTrigger
 from database.db import get_db
 from utils.timezone import fmt_msk, now_utc, utc_to_msk
 from utils.flags import fmt_match, flag, fmt_pred_short
-from services.scoring import score_group, score_playoff
+from services.scoring import score_group, score_playoff, playoff_winner_guessed
+from utils.text import pred_result_label
 from config import VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID
 
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -348,58 +349,46 @@ async def _fetch_and_send_results(bot, match_id: int):
     match_str = _fmt_result_header(match, home_score, away_score, outcome_type, use_spoiler)
     result_text = f"🏁 Матч завершён!\n\n{match_str}\n\n"
 
+    league_names = {l["id"]: l["name"] for l in db.table("leagues").select("id, name").execute().data}
+    user_names = {u["id"]: u["name"] for u in db.table("users").select("id, name").execute().data}
+    is_playoff = match["stage"] == "playoff"
+    actual_oc = outcome_type or ("P1" if home_score > away_score else "P2")
+
+    # Group predictions by league, best result on top
+    preds_by_league: dict[int, list] = {}
+    for p in preds:
+        preds_by_league.setdefault(p["league_id"], []).append(p)
+    for ps in preds_by_league.values():
+        ps.sort(key=lambda p: -(p["points"] or 0))
+
     league_members = _get_all_league_members()
     for user_id, tg_id in league_members.items():
-        user_preds = [p for p in preds if p["user_id"] == user_id]
-        if not user_preds:
+        # Each recipient sees every league they predicted in — with everyone's predictions
+        user_league_ids = sorted(
+            lid for lid, ps in preds_by_league.items()
+            if any(p["user_id"] == user_id for p in ps)
+        )
+        if not user_league_ids:
             continue
         text = result_text
-        for pred in user_preds:
-            pts = pred.get("points", 0) or 0
-            league = db.table("leagues").select("name").eq("id", pred["league_id"]).execute().data
-            league_name = league[0]["name"] if league else "Лига"
-            pred_str = fmt_pred_short(pred, match["home_team"], match["away_team"])
-            pts_display = f"+{pts} оч."
-            if use_spoiler:
-                pts_display = f"<tg-spoiler>{pts_display}</tg-spoiler>"
-            text += f"{league_name}: {pred_str} → {pts_display}\n"
+        for lid in user_league_ids:
+            text += f"<b>{league_names.get(lid, 'Лига')}</b>\n"
+            for p in preds_by_league[lid]:
+                name = user_names.get(p["user_id"], "?")
+                winner_ok = is_playoff and playoff_winner_guessed(
+                    p.get("outcome_type") or "P1", actual_oc
+                )
+                label = pred_result_label(p.get("points"), is_playoff, winner_ok)
+                pred_str = fmt_pred_short(p, match["home_team"], match["away_team"])
+                line = f"{name}: {pred_str} → {label}"
+                if use_spoiler:
+                    line = f"<tg-spoiler>{line}</tg-spoiler>"
+                if p["user_id"] == user_id:
+                    line = f"<b>{line}</b>"
+                text += line + "\n"
+            text += "\n"
         try:
-            await bot.send_message(tg_id, text, parse_mode="HTML" if use_spoiler else None)
-        except Exception:
-            pass
-
-    await _reveal_private_predictions(bot, match, preds, home_score, away_score)
-
-
-async def _reveal_private_predictions(bot, match, preds, home_score, away_score):
-    db = get_db()
-    private_league = db.table("leagues").select("id").eq("type", "private").execute().data
-    if not private_league:
-        return
-    private_id = private_league[0]["id"]
-    private_preds = [p for p in preds if p["league_id"] == private_id]
-    if len(private_preds) < 2:
-        return
-
-    kickoff = dtparser.parse(match["kickoff_at"]).replace(tzinfo=timezone.utc)
-    use_spoiler = 0 <= utc_to_msk(kickoff).hour < 8
-
-    match_str = fmt_match(match["home_team"], match["away_team"])
-    lines = [f"🔍 Прогнозы Братья:\n{match_str}\n"]
-    for pred in private_preds:
-        user = db.table("users").select("name").eq("id", pred["user_id"]).execute().data
-        name = user[0]["name"] if user else "?"
-        pts = pred.get("points", 0) or 0
-        pred_str = fmt_pred_short(pred, match["home_team"], match["away_team"])
-        line = f"{name}: {pred_str} → +{pts}"
-        if use_spoiler:
-            line = f"<tg-spoiler>{line}</tg-spoiler>"
-        lines.append(line)
-
-    text = "\n".join(lines)
-    for tg_id in (VANYA_TELEGRAM_ID, NIK_TELEGRAM_ID):
-        try:
-            await bot.send_message(tg_id, text, parse_mode="HTML" if use_spoiler else None)
+            await bot.send_message(tg_id, text.rstrip(), parse_mode="HTML")
         except Exception:
             pass
 

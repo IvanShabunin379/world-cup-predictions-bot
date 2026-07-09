@@ -48,9 +48,19 @@ def start_scheduler(bot):
         id="catch_up_results",
         replace_existing=True,
     )
+    # Every 6h: discover newly announced playoff fixtures (semis, bronze, final)
+    # on ESPN and add them to the matches table automatically.
+    scheduler.add_job(
+        _sync_new_matches,
+        trigger=CronTrigger(hour="*/6", minute=40, timezone="UTC"),
+        args=[bot],
+        id="sync_new_matches",
+        replace_existing=True,
+    )
     scheduler.start()
     asyncio.create_task(_schedule_result_jobs(bot))
     asyncio.create_task(_catch_up_results(bot))
+    asyncio.create_task(_sync_new_matches(bot))
     # One-off: auto-fill Nik's prediction for Алжир–Австрия (match 59) if he misses it
     from datetime import datetime
     kickoff_59 = datetime(2026, 6, 28, 2, 0, tzinfo=timezone.utc)
@@ -114,6 +124,115 @@ async def _catch_up_results(bot):
         # Match should be over (kickoff + ~2h) before we try to fetch a result.
         if kickoff + timedelta(hours=2) <= now:
             await _fetch_and_send_results(bot, m["id"])
+
+
+# Playoff round by calendar day of kickoff (WC 2026 schedule).
+_PLAYOFF_ROUND_WINDOWS = [
+    ("2026-07-08", 2),  # 1/8 финала
+    ("2026-07-12", 3),  # 1/4 финала
+    ("2026-07-16", 4),  # полуфиналы
+    ("2026-07-18", 5),  # матч за 3-е место
+]
+_FINAL_ROUND = 6
+
+
+def _playoff_round_for(kickoff) -> int:
+    day = kickoff.strftime("%Y-%m-%d")
+    for last_day, rnd in _PLAYOFF_ROUND_WINDOWS:
+        if day <= last_day:
+            return rnd
+    return _FINAL_ROUND
+
+
+async def _sync_new_matches(bot):
+    """Discover newly announced playoff fixtures on ESPN and insert them.
+
+    Placeholder fixtures ("Semifinal 1 Winner" etc.) don't map to real team
+    names, so a fixture is only picked up once its bracket slot resolves.
+    """
+    import aiohttp
+    from services.espn import ESPN_URL, TEAM_EN_TO_RU
+
+    db = get_db()
+    try:
+        existing = db.table("matches").select("id, home_team, away_team, kickoff_at").execute().data
+    except Exception:
+        return
+    existing_keys = set()
+    for m in existing:
+        day = dtparser.parse(m["kickoff_at"]).strftime("%Y-%m-%d")
+        existing_keys.add((frozenset((m["home_team"], m["away_team"])), day))
+    next_id = max(m["id"] for m in existing) + 1
+
+    now = now_utc()
+    new_rows = []
+    async with aiohttp.ClientSession() as session:
+        for offset in range(7):
+            date_str = (now + timedelta(days=offset)).strftime("%Y%m%d")
+            try:
+                async with session.get(
+                    ESPN_URL, params={"dates": date_str},
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as resp:
+                    data = await resp.json()
+            except Exception:
+                continue
+            for e in data.get("events", []):
+                try:
+                    comp = e["competitions"][0]
+                    home = away = None
+                    for c in comp["competitors"]:
+                        ru = TEAM_EN_TO_RU.get(c["team"]["displayName"])
+                        if c["homeAway"] == "home":
+                            home = ru
+                        else:
+                            away = ru
+                    if not home or not away:
+                        continue  # unresolved bracket placeholder
+                    kickoff = dtparser.parse(e["date"]).astimezone(timezone.utc)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    continue
+                if kickoff <= now:
+                    continue
+                key = (frozenset((home, away)), kickoff.strftime("%Y-%m-%d"))
+                if key in existing_keys:
+                    continue
+                existing_keys.add(key)
+                new_rows.append({
+                    "id": next_id,
+                    "home_team": home,
+                    "away_team": away,
+                    "kickoff_at": kickoff.isoformat(),
+                    "stage": "playoff",
+                    "round": _playoff_round_for(kickoff),
+                    "status": "upcoming",
+                })
+                next_id += 1
+
+    if not new_rows:
+        return
+    try:
+        db.table("matches").insert(new_rows).execute()
+    except Exception:
+        logging.exception("Failed to insert auto-discovered matches")
+        return
+
+    # Register reveal/result jobs for the new matches right away.
+    await _schedule_result_jobs(bot)
+
+    lines = [
+        f"{fmt_match(r['home_team'], r['away_team'])} · {fmt_msk(dtparser.parse(r['kickoff_at']))}"
+        for r in new_rows
+    ]
+    text = (
+        "🆕 В базу автоматически добавлены новые матчи:\n\n"
+        + "\n".join(lines)
+        + "\n\nРаспределение «кто первый» для Братьев не назначено."
+    )
+    try:
+        await bot.send_message(VANYA_TELEGRAM_ID, text)
+    except Exception:
+        pass
 
 
 async def _schedule_result_jobs(bot):
